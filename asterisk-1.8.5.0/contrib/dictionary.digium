@@ -1,0 +1,72 @@
+#
+#       Digium's Asterisk specific radius attributes
+#	markster@digium.com
+#
+#
+
+VENDOR	  Digium	22736
+
+BEGIN-VENDOR	Digium
+
+ATTRIBUTE	Asterisk-Acc-Code		101	string	Digium
+ATTRIBUTE	Asterisk-Src			102	string  Digium
+ATTRIBUTE	Asterisk-Dst			103	string  Digium
+ATTRIBUTE	Asterisk-Dst-Ctx		104	string  Digium
+ATTRIBUTE	Asterisk-Clid			105	string  Digium
+ATTRIBUTE	Asterisk-Chan			106	string  Digium
+ATTRIBUTE	Asterisk-Dst-Chan		107	string  Digium
+ATTRIBUTE	Asterisk-Last-App		108	string  Digium
+ATTRIBUTE	Asterisk-Last-Data		109	string  Digium
+ATTRIBUTE	Asterisk-Start-Time		110	string	Digium
+ATTRIBUTE	Asterisk-Answer-Time		111	string	Digium
+ATTRIBUTE	Asterisk-End-Time		112	string	Digium
+ATTRIBUTE	Asterisk-Duration		113	integer	Digium
+ATTRIBUTE	Asterisk-Bill-Sec		114	integer	Digium
+ATTRIBUTE	Asterisk-Disposition		115	string	Digium
+ATTRIBUTE	Asterisk-AMA-Flags		116	string	Digium
+ATTRIBUTE	Asterisk-Unique-ID		117	string  Digium
+ATTRIBUTE	Asterisk-User-Field		118	string  Digium
+
+ATTRIBUTE	Asterisk-Linked-Id				119	string  Digium
+ATTRIBUTE	Asterisk-Main-Unique_Id			20	string  Digium
+ATTRIBUTE	Asterisk-Customer-Number		21	string  Digium
+ATTRIBUTE	Asterisk-Customer-Number-Type	22	string  Digium
+ATTRIBUTE	Asterisk-Customer-area-code		23	string  Digium
+ATTRIBUTE   Asterisk-Callee-Number     		24 string  Digium
+ATTRIBUTE   Asterisk-Ob-Clid     		        25 string  Digium
+ATTRIBUTE	Asterisk-Start-Time				27	string	Digium
+ATTRIBUTE	Asterisk-Answer-Time			28	string	Digium
+ATTRIBUTE	Asterisk-Dial-Time		        29	string	Digium
+ATTRIBUTE	Asterisk-Bridge-Time			30	string	Digium
+ATTRIBUTE	Asterisk-End-Time				31	string	Digium
+ATTRIBUTE	Asterisk-Ivr-Id					32	string	Digium
+ATTRIBUTE	Asterisk-Ivr-Flow				33	string  Digium
+ATTRIBUTE	Asterisk-Telset-Name			34	string  Digium
+ATTRIBUTE	Asterisk-Record-File			35	string  Digium
+ATTRIBUTE	Asterisk-Call-Type				36	string	Digium
+ATTRIBUTE	Asterisk-Status					37	string	Digium
+ATTRIBUTE	Asterisk-Mark					38	string	Digium
+ATTRIBUTE	Asterisk-Hangup-Cause			39	string	Digium
+ATTRIBUTE	Asterisk-Gw-Ip					40	string  Digium
+ATTRIBUTE	Asterisk-Number-Trunk			41	string  Digium
+ATTRIBUTE	Asterisk-Enterprise-Id			42	string Digium
+ATTRIBUTE	Asterisk-Mark-Data				43	string Digium
+ATTRIBUTE	Asterisk-Force_Disconnect		44	string Digium
+ATTRIBUTE	Asterisk-Hangup-Side			45	string Digium
+ATTRIBUTE   Asterisk-Request-Time           46  string Digium
+ATTRIBUTE   Asterisk-Request-Unique-Id      47  string Digium
+ATTRIBUTE	Asterisk-Sip-Cause				50	string Digium
+ATTRIBUTE	Asterisk-Ivr-Flow-Sec			51	string  Digium
+
+ATTRIBUTE	Asterisk-Detail-Mark			52	string  Digium
+ATTRIBUTE   Asterisk-Monitor-Start-Time     53  string  Digium
+ATTRIBUTE   Asterisk-Monitor-Stop-Time      54  string  Digium
+ATTRIBUTE   Asterisk-Detail-Clid            55  string  Digium
+ATTRIBUTE	Asterisk-Detail-Call-Type			81	string Digium
+ATTRIBUTE	Asterisk-Detail-Callee-Number		82	string Digium
+ATTRIBUTE	Asterisk-Detail-Gw-Ip				83	string Digium
+ATTRIBUTE	Asterisk-Callee-area-code			84	string Digium
+ATTRIBUTE	Asterisk-Hotline				85	string Digium
+
+END-VENDOR	Digium
+

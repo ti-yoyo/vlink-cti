@@ -1,0 +1,5 @@
+[general]
+server=vocp-redis.a9d2nt.ng.0001.cnn1.cache.amazonaws.com.cn
+port=6379
+timeout=3000
+;使用select 4 数据库

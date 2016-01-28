@@ -1,0 +1,90 @@
+/*全局变量定义*/
+
+globals {
+    AGI_SERVER=127.0.0.1;              //agi server 地址
+    AGI_PORT=4573;                              //agi server port
+    
+    IVR_SERVER=127.0.0.1:8089;              //ivr server ip
+    IVR_PREFIX=interface/ivr;                   //ivr server prefix
+
+    BIN_PATH=/usr/local/bin;                    //执行外部命令目录
+
+    GROUP_CALL_LIMIT=500;                       //全局并发呼叫限制值
+    
+    MAX_ENTER_IVR_NODE=100;                     //一次呼叫重复进入ivr_node的最大次数
+
+    ENTERPRISE_ID_LEN=7;                        //企业id长度 3000001    
+    PREFIX_LEN=3;                                //网关前缀长度 111
+    IVR_FLOW_LEN=4000;                          // cdr_ivr_flow 长度阀值
+
+    VOICE_MAIL_PATH=/var/spool/asterisk/monitor;    //留言存储语音目录
+    IVR_SOUNDS_NFS_PATH=/var/nfs/voices/ivr_voice;     //ivr语音在nfs的目录，用于自助录音存储和重听
+    MAX_CURL_LEN=4096;                              //最大http接口返回数据量
+
+
+    /* 呼叫类型定义 */
+    CALL_TYPE_IB=1;                                 
+    CALL_TYPE_OB_WEBCALL=2;
+    CALL_TYPE_OB_SELF_RECORD=7;
+
+
+    CALL_TYPE_IB_CALL_TEL=101;   //呼入后呼转
+    
+    CALL_TYPE_OB_CALL_TEL=201;   //webcall外呼的呼转
+
+    
+
+    /* userfield   call_status 呼叫结果定义 */
+    CDR_STATUS_IB_BRIDGED=1;
+    CDR_STATUS_IB_TEL_CALLED=2;
+    CDR_STATUS_IB_SYSTEM_ANSWER=3;
+    CDR_STATUS_IB_BAD_IVR=4;
+    CDR_STATUS_IB_ENTERPRISE_STOP=5;
+    CDR_STATUS_IB_ENTERPRISE_PAUSED=6;
+    CDR_STATUS_IB_BLACK=7;
+    CDR_STATUS_IB_ENTERPRISE_NO_REG=8;
+    CDR_STATUS_IB_NOANSWER_COLORRING=9;
+    CDR_STATUS_IB_OVER_BOSS_LIMIT=11;
+    CDR_STATUS_IB_SYSTEM_NOANSWER=12;
+    CDR_STATUS_IB_FAILED_OTHER=13;
+
+    CDR_STATUS_OB_TTS_FAIL_WEBCALL=20;
+    CDR_STATUS_OB_NOANSWER_WEBCALL=21;
+    CDR_STATUS_OB_ANSWER_WEBCALL=22;
+    CDR_STATUS_OB_TEL_CALLED_WEBCALL=23;
+    CDR_STATUS_OB_BRIDGED_WEBCALL=24;
+    
+    //userfield  mark
+
+    CDR_STATUS_DETAIL_CALL_FAIL=1;
+    CDR_STATUS_DETAIL_ANSWER=2;
+
+    CALL_MARK_VOICEMAIL=1;
+    CALL_MARK_PRESS_KEY=4;
+    CALL_MARK_AMD=2; 
+    CALL_MARK_RETRY_IGNORE=8;
+
+    ROUTER_CLID_CALL_TYPE_IB_RIGHT=1;
+    ROUTER_CLID_CALL_TYPE_OB_LEFT=2;
+    ROUTER_CLID_CALL_TYPE_OB_RIGHT=3;
+
+    //userfiled  enterprise status
+
+    BUSINESS_STATUS_NO_SERVICE=0;   //企业服务
+    BUSINESS_STATUS_OK=1;           //各种状态：正常、暂停、停机、注销
+    BUSINESS_STATUS_PAUSED=2;
+    BUSINESS_STATUS_STOP=3;
+    BUSINESS_STATUS_CLOSE=4;
+    
+    DEFAULT_DIAL_TIMEOUT=60;    //默认使用dial呼叫的超时时间60秒
+    DEFAULT_TRANSFER_TIMEOUT=25;    //默认咨询转移呼叫的超时时间25秒
+    DEFAULT_SELECT_TIMEOUT=5;   //默认选择节点的按键超时时间5秒
+    //max longth of IVR
+
+    //挂机原因
+    HANGUP_CAUSE_MAIN=1000; //主通道挂机
+    HANGUP_CAUSE_SYSTEM=1001;   //非主通道挂机
+    HANGUP_CAUSE_DISCONNECT=1002;   //被强拆
+
+    TRANSFER_CONTEXT=transfer;          //转移的context
+}

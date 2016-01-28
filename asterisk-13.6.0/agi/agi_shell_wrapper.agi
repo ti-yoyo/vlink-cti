@@ -1,0 +1,85 @@
+#!/usr/bin/perl
+
+
+use POSIX qw(strftime);
+
+# 负责写数数据，清理临时文件
+
+open(STDERR,">/var/log/asterisk/agi_shell_wrapper.log");
+
+$|=1;
+
+# Setup some variables
+my %AGI; my $tests = 0; my $fail = 0; my $pass = 0;
+
+while(<STDIN>) {
+	chomp;
+	last unless length($_);
+	if (/^agi_(\w+)\:\s+(.*)$/) {
+		$AGI{$1} = $2;
+	}
+}
+
+print STDERR "AGI Environment Dump:\n";
+foreach my $i (sort keys %AGI) {
+	print STDERR " -- $i = $AGI{$i}\n";
+}
+
+sub check_result {
+	my ($res) = @_;
+	my $retval;
+	$tests++;
+	chomp $res;
+	if ($res =~ /^200/) {
+		$res =~ /result=(-?\d+)/;
+		if (!length($1)) {
+			print STDERR "FAIL ($res)\n";
+			$fail++;
+		} else {
+			print STDERR "PASS ($1)\n";
+			$pass++;
+		}
+	} else {
+		print STDERR "FAIL (unexpected result '$res')\n";
+		$fail++;
+	}
+}
+
+sub get_result {
+	my ($cmd) = @_;
+	my $retval;
+	print "$cmd\n";
+	my $res = <STDIN>;
+
+	chomp $res;
+	if ($res =~ /^200/) {
+		$res =~ /result=(-?\d+)/;
+		if (!length($1)) {
+			print STDERR "FAIL ($res)\n";
+		} else {
+			# print STDERR "PASS ($1)\n";
+			$res =~ s/\(/</;   # Have to convert ( to > and ) to >
+			$res =~ s/\)/>/;
+			$x = "<(.+)>";    # IAX2/5004@5004/2    SIP/5003-130f
+			$res =~/$x/;
+			my $tmp = $1;
+			# print STDERR "getresult: $1\n";
+			$retval = $1;
+			return $retval;
+		}
+	} else {
+		print STDERR "FAIL (unexpected result '$res')\n";
+	}
+}
+my $script=$AGI{"network_script"};
+my $params=$AGI{"arg_1"};
+#$params =~ s/'//g;
+#$params =~ s/"//g;
+#$params =~ s/`//g;
+print STDERR "agi_params =  $params\n";
+print STDERR "script =  $script\n";
+print STDERR "/usr/local/bin/$script \"$params\"\n";
+$result=`/usr/local/bin/$script $params`;
+print STDERR "result=$result\n";
+print "SET VARIABLE AGI_RESULT $result";
+exit 0;

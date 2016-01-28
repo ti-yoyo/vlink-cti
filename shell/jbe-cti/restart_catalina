@@ -1,0 +1,50 @@
+##########################################################
+#
+# 重启catalina
+# safe_tomcat 已更名为safe_catalina
+#########################################################
+
+#!/bin/bash
+. /etc/profile
+
+# 1.杀掉safe_catalina进程;
+# 2.杀掉java进程;
+# 3.利用safe_catalina启动java.
+
+# 1
+for pidof_catalina in `ps aux | grep safe_catalina | grep /bin/sh | awk '{print $2}'`
+do
+    if test "x$pidof_catalina" != "x"
+    then
+        kill -9 $pidof_catalina
+    fi
+done
+
+# 2
+$CATALINA_HOME/bin/catalina.sh stop
+/bin/sleep 5
+pname=`/bin/ps -ef|grep bootstrap.jar |grep -v grep|awk '{print $2} '` 
+
+echo "program pid : $pname"
+for name in $pname; 
+do 
+    echo   "kill   $name " 
+    kill   -9   $name 
+done
+
+pport=`netstat -ntlp | grep ":::8089 " | awk -F ':' '{print $4}'` # get port 8089
+if test "x$pport" != "x" ; then # 8089 8080 exist
+    count=1
+    while test $count -lt 10
+    do
+        echo "count:$count"
+        pid_bootstrap=`/bin/ps -ef|grep bootstrap.jar|grep java|awk '{print $2}'`
+        if test "x$pid_bootstrap" != "x"; then # 8089 exist
+            kill -9 $pid_bootstrap
+        fi
+        count=$(($count+1))
+    done
+fi
+
+# 3
+nohup /usr/local/bin/safe_catalina >> /var/log/ccic/safe_catalina 2>&1 &

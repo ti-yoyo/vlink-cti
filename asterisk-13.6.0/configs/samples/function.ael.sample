@@ -1,0 +1,149 @@
+
+//公共http post接口，输入url，返回必须为json格式，json变量打入通道中
+macro curl_post(url,data,hcb) {
+    NoOp(${url});
+    CURLOPT(httptimeout)=30; // 设置http响应超时时长
+    CURLOPT(conntimeout)=2;// Number of seconds to wait for connection
+    CURLOPT(dnstimeout)=2; // Number of seconds to wait for DNS response
+    Set(res=${CURL("${url}","${data}")});
+    if(${LEN(${res})} > ${MAX_CURL_LEN}){
+        return;
+    }
+    if(${LEN(${res})} = 0 ){
+        return;
+    }
+    Jsonvariables(${res});
+    return;
+
+    catch h {
+        if("${hcb}" != ""){
+            jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@default;
+        }
+    };
+    return;
+}
+//公共http接口，输入url，返回必须为json格式，json变量打入通道中
+macro curl(url,hcb) {
+    NoOp(${url});
+    CURLOPT(httptimeout)=30; // 设置http响应超时时长
+    CURLOPT(conntimeout)=2;// Number of seconds to wait for connection
+    CURLOPT(dnstimeout)=2; // Number of seconds to wait for DNS response
+    Set(res=${CURL("${url}")});
+    if(${LEN(${res})} > ${MAX_CURL_LEN}){
+        return;
+    }
+    if(${LEN(${res})} = 0 ){
+        return;
+    }
+    Jsonvariables(${res});
+    return;
+
+    catch h {
+        if("${hcb}" != ""){
+            jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@default;
+        }
+    };
+    return;
+}
+//替换字符串成*
+macro replace_pwd(str,hcb){
+    for(x=1; ${x}<=${LEN(str)}; x=${x}+1) {
+        Set(REPLACE_STR=${REPLACE_STR}*);
+    }
+    return;
+
+    catch h {
+        if("${hcb}" != ""){
+            jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@default;
+        }
+    };
+}
+
+
+//混音通道
+context mix_sound {
+    h => {
+        NoOp(Hangup in mix_sound);
+    }
+    s => {
+        NoOp(${mix_sound});
+        Playback(${mix_sound});
+    }
+}
+context global_channel_spy {
+    s => {
+        NoOp(${spied_channel});
+        NoOp(${spied_unique_id});
+        ChanSpy(${spied_channel},bqEBw);
+    }
+}
+
+macro hangup_set(param_call_type) {
+    &curl(${IVR_SERVER}/${IVR_PREFIX}/GetHangupSet?enterpriseId=${enterprise_id}&callType=${param_call_type},${CONTEXT});
+    if(${hangup_set_count} > 0) {
+        for(local_m=0;${local_m}<${hangup_set_count};local_m=${local_m}+1) {
+            if("${hangup_set_${local_m}_value_type}" = "0"){ // 字符串
+                ${EVAL(${hangup_set_${local_m}_name})}=${EVAL(${hangup_set_${local_m}_value})};
+            }else{ // 表达式
+                Set(${EVAL(${hangup_set_${local_m}_name})}=${EVAL(${hangup_set_${local_m}_value})});
+            }
+        }
+    }
+    return;
+
+    catch h {
+        NoOp(bYe);
+    }
+}
+
+
+// 进入节点后更新cdr_ivr_flow 或 cdr_ivr_flow_sec
+macro set_ivr_flow_enter() {
+    Set(ivr_flow_extra=);
+    Set(set_ivr_flow_leave=false);
+    if(${ISNULL(${cdr_ivr_flow_sec})} == 1) {
+        if(${LEN(${cdr_ivr_flow})} > ${IVR_FLOW_LEN}) {
+            Set(cdr_ivr_flow_sec=${cdr_ivr_flow_sec}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+        } else {
+            Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+        }
+    } else {
+        Set(cdr_ivr_flow_sec=${cdr_ivr_flow_sec}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    }
+    return;
+
+    catch h {
+        NoOp(Bye);
+    }
+}
+
+// 离开节点之前更新cdr_ivr_flow或cdr_ivr_flow_sec
+macro set_ivr_flow_leave() {
+    if("${set_ivr_flow_leave}" = "false"){
+        if(${ISNULL(${cdr_ivr_flow_sec})} == 1) {
+            if(${LEN(${cdr_ivr_flow})} > ${IVR_FLOW_LEN}) {
+                Set(cdr_ivr_flow_sec=${cdr_ivr_flow_sec}|${EPOCH}${ivr_flow_extra},);
+            } else {
+                Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH}${ivr_flow_extra},);
+            }
+        } else {
+            Set(cdr_ivr_flow_sec=${cdr_ivr_flow_sec}|${EPOCH}${ivr_flow_extra},);
+        }
+        Set(set_ivr_flow_leave=true);
+    }
+    catch h {
+        NoOp(Bye);
+    }
+}

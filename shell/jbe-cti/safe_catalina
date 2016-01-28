@@ -1,0 +1,85 @@
+#!/bin/sh
+
+# 作用:监控tomcat的运行,并在其停止时自动重新启动
+# Copyright (C) 2006,2007,2008,2009,2010,2011,2012 T&I Inc.
+# Report bugs to <liucl@ti-net.com.cn>
+# 运行方式:后台运行
+# nohup /usr/local/bin/safe_catalina > /var/log/ccic/safe_catalina 2>&1 &
+
+######需要根据实际情况进行修改的变量######
+NOSS_IP=noss.ti-net.com.cn
+NOTIFY=vocp.list@ti-net.com.cn
+systemName=`cat /var/run/systemName`
+serverName=VOCP-${systemName}
+##########################################
+
+serverType=15
+type=3
+SLEEPSECS=5
+
+URL="http://$NOSS_IP/interface/TrapEventData"
+resendlist=safe_tomcat_resend.list # 保存post失败的事件的内容,NOSS可访问时重新发送
+STARTTIME=$(date +%s)
+export STARTTIME=$STARTTIME
+
+IP=`curl -s -m 10 "http://169.254.169.254/latest/meta-data/local-ipv4"`
+HWADDR=`curl -s -m 10 "http://169.254.169.254/latest/meta-data/mac"`
+
+#上次检查状态 0 未启动 1正常
+lastStatus=0
+
+#本次检查状态 0 未启动 1正常
+nowStatus=0
+
+keep_running() {
+    while :
+    do
+        date=$(date +%Y-%m-%d" "%H:%M:%S)           # time, eg:2012-07-20 12:20:10
+        date1=${date/ /%20}
+        DATE=${date1//:/%3A}
+
+        is_running=`ps aux | grep org.apache.catalina.startup.Bootstrap | grep java | wc -l`
+        if test $is_running -eq 1 ; then
+            lastStatus=1    # running
+        else
+            if test $lastStatus -eq 1 ; then
+                content=Stopped
+                usr_used=`df -lh | grep /usr | awk '{print $5}'`
+                mem_free=`free -m | grep Mem | awk '{print $4}'`
+                mem_free_m="$mem_free"m
+                content="$content-/usr:$usr_used-memoryFree:$mem_free_m"
+                content=`echo "$content" | od -t x1 -A n -w999999 | tr " " %`
+                echo "tomcat on $MACHINE($IP) died at $date!" | mail -s "tomcat died!" $NOTIFY
+                post_content="eventTime=$DATE&mac=$HWADDR&serverName=$serverName&ip=$IP&serverType=$serverType&priority=1&type=$type&content=$content"
+                post_ok=`curl -d $post_content $URL 2>&1 | grep result | awk -F '"' '{print $4}'`
+                if test "post_ok" != "success" ; then
+                    echo $post_content >> /tmp/$resendlist
+                fi
+                lastStatus=0
+            fi
+            $CATALINA_HOME/bin/catalina.sh start 2>&1
+            sleep 30
+            # 重启后,判断是否重启成功.成功则发出RestartOK事件.
+
+            date_s=$(date +%Y-%m-%d" "%H:%M:%S)           # time, eg:2012-07-20 12:20:10
+            date1_s=${date_s/ /%20}
+            DATE_S=${date1_s//:/%3A}
+            restart_ok=`ps aux | grep org.apache.catalina.startup.Bootstrap | grep java | wc -l`
+            listen_grep_8089=`netstat -ntlp | grep 8089 | wc -l`
+            http_result=`curl -s -w "HttpCode:%{http_code}\n" "http://${IP}/images/logo.gif" -m 5 | grep -a HttpCode | awk -F ':' '{printf $2}'`
+            if test $restart_ok -gt 0 && test $listen_grep_8089 -gt 0 && test "${http_result}" == "200" ; then
+                content=`echo "Restart OK" | od -t x1 -A n -w999999 | tr " " %`
+                post_content="eventTime=$DATE_S&mac=$HWADDR&serverName=$serverName&ip=$IP&serverType=$serverType&priority=1&type=$type&content=$content"
+                post_ok=`curl -d $post_content $URL 2>&1 | grep result | awk -F '"' '{print $4}'`
+                if test "$post_ok" != "success" ; then
+                    echo $post_content >> /tmp/$resendlist
+                fi
+                lastStatus=1
+            fi
+        fi
+        
+        sleep $SLEEPSECS
+    done
+}
+
+keep_running &

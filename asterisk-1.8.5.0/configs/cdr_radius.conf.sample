@@ -1,0 +1,50 @@
+;
+; Asterisk Call Detail Record  Radius attribute  engine configuration
+;
+; CDR is Call Detail Record, which provides logging services via a variety of
+; pluggable backend modules.  Detailed call information can be recorded to
+; databases, files, etc.  Useful for billing, fraud prevention, compliance with
+; Sarbanes-Oxley aka The Enron Act, QOS evaluations, and more.
+
+;formate :attr_name=id
+; rembmer to keep those attributes  synchronise to dictionary.digium
+
+[attributes]
+main_unique_id=20
+customer_number=21
+customer_number_type=22
+customer_area_code=23
+callee_number=24
+ob_clid=25
+start_time=27
+answer_time=28
+dial_time=29
+bridge_time=30
+end_time=31
+ivr_id=32
+ivr_flow=33
+telset_name=34
+record_file=35
+call_type=36
+status=37
+mark=38
+hangup_cause=39
+gw_ip=40
+number_trunk=41
+enterprise_id=42
+mark_data=43
+force_disconnect=44
+hangup_side=45
+request_time=46
+request_unique_id=47
+sip_cause=50
+ivr_flow_sec=51
+detail_mark=52
+monitor_start_time=53
+monitor_stop_time=54
+detail_clid=55
+detail_call_type=81
+detail_callee_number=82
+detail_gw_ip=83
+callee_area_code=84
+hotline=85

@@ -1,0 +1,12 @@
+#!/bin/bash
+# 重启asterisk
+# 运行方式：crontab
+# 20 3 * * * /usr/local/bin/restart_asterisk > /dev/null
+# 日志：无日志
+
+/usr/sbin/asterisk -rx 'channel request hangup all'
+killall -9 asterisk safe_asterisk
+killall -9 asterisk safe_asterisk
+killall -9 asterisk safe_asterisk
+sleep 3
+/usr/sbin/safe_asterisk

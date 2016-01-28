@@ -1,0 +1,11 @@
+{
+	global:
+		LINKER_SYMBOL_PREFIX*ast_redis_read;
+		LINKER_SYMBOL_PREFIX*ast_redis_write;
+		LINKER_SYMBOL_PREFIX*ast_redis_lock;
+		LINKER_SYMBOL_PREFIX*ast_redis_unlock;
+        LINKER_SYMBOL_PREFIX*ast_redis_cmd;
+	local:
+		*;
+};
+

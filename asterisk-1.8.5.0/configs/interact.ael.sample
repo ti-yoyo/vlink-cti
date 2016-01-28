@@ -1,0 +1,2109 @@
+macro interact_investigation(){
+    &curl(${IVR_SERVER}/${IVR_PREFIX}/GetInvestigation?enterpriseId=${enterprise_id},${CONTEXT});
+    sv_start_time=${EPOCH};
+    sv_cur_node=1;
+    while("${sv_${sv_cur_node}_action}" != ""){        //cur_node_action不为空的情况下
+        switch(${sv_${sv_cur_node}_action}){     //循环这个cur_node_action 所对应的action值
+        case 1:
+			NoOp(${sv_cur_node});
+			switch(${sv_${sv_cur_node}_play_type}){ // 1:语音 2:数字 3:数目 4:TTS
+			case 1:
+				Playback(${sv_${sv_cur_node}_play_file});
+				break;
+			case 2:
+				SayDigits(${sv_${sv_cur_node}_play_file});
+				break;
+			case 3:
+				SayNumber(${sv_${sv_cur_node}_play_file});
+				break;
+			case 4:
+				System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}"  "${sv_${sv_cur_node}_play_file}");
+				NoOp(${SYSTEMSTATUS});
+				if("${SYSTEMSTATUS}" = "SUCCESS"){
+					System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${sv_${sv_cur_node}_play_file}");
+				}
+				local file=${MD5(${EVAL(${sv_${sv_cur_node}_play_file})})};
+				//local file=${MD5((${sv_${sv_cur_node}_play_file}))};
+				NoOp(${sv_${sv_cur_node}_play_file});
+				Playback(${TTS_SOUND_PATH}/${file});
+				break;
+			default:
+				Hangup();
+				break;
+			}
+			sv_cur_node=${sv_${sv_cur_node}_next};
+			break;
+        case 2:
+            local retry=0;
+            while(${retry} < ${sv_${sv_cur_node}_select_retries}){    //cur_node_select_retries 重试次数
+                Read(res,${sv_${sv_cur_node}_select_file},1,n,1,5);
+                if("${res}" != "" && "${sv_${sv_cur_node}_select_${res}_next}" != ""){
+                    sv_keys=${sv_keys}${res};
+                    sv_cur_node=${sv_${sv_cur_node}_select_${res}_next};
+                    break;
+                }else {
+                    Playback(press_error_and_try);
+                    retry=${retry} + 1;
+                }
+            }
+            if("${retry}" = "${sv_${sv_cur_node}_select_retries}"){     //大于或等于最大次数的时候挂机
+                Hangup();
+            }
+            break;
+        default:
+            Hangup();
+        break;
+        }
+    }
+    Hangup();
+    return;
+
+    catch h {
+        sv_end_time=${EPOCH};
+        if(("${sv_start_time}" != "") && ("${sv_start_time}" != "${sv_end_time}")){//如果进入过满意度调查，而且开始时间和结束时间不在同一秒才发
+            //推送满意度调查cdr
+            &curl(${IVR_SERVER}/${IVR_PREFIX}/SetInvestigation?enterpriseId=${enterprise_id}&mainUniqueId=${cdr_main_unique_id}&numberTrunk=${cdr_number_trunk}&callType=${cdr_call_type}&startTime=${sv_start_time}&endTime=${sv_end_time}&cno=${cdr_bridged_cno}&keys=${sv_keys},${CONTEXT});
+        }
+        jump h@interact;
+    };
+}
+
+//dial座席，座席接听执行的代码
+macro interact_agent_bridge(){
+    //接听后即将座席状态置为整理忙
+    PauseQueueMember(,${MASTER_CHANNEL(dial_interface)},,pauseWrapup);
+    //Set(MASTER_CHANNEL(cdr_bridged_cno)=${MASTER_CHANNEL(dial_cno)});
+    Set(cdr_start_time=${STRPTIME(${CDR(start)},,%Y-%m-%d %H:%M:%S)});
+    if("${MASTER_CHANNEL(cdr_bridge_time)}" = ""){
+        Set(MASTER_CHANNEL(cdr_bridge_time)=${EPOCH});
+    }
+    if("${MASTER_CHANNEL(cdr_call_type)}" = "${CALL_TYPE_IB}" || "${MASTER_CHANNEL(cdr_call_type)}" = "${CALL_TYPE_WEB400_IB}"){
+        Set(MASTER_CHANNEL(cdr_status)=${CDR_STATUS_IB_BRIDGED});
+    }else{
+        Set(MASTER_CHANNEL(cdr_status)=${CDR_STATUS_OB_BRIDGED});
+    }
+    Set(cdr_status=${CDR_STATUS_IB_DETAIL_ANSWER});
+    Set(cdr_answer_time=${EPOCH});
+    Set(cno=${MASTER_CHANNEL(dial_cno)});
+    if("${MASTER_CHANNEL(direct_call_agent)}" == "1") {
+
+        Set(MASTER_CHANNEL(direct_call_agent)=2);
+    }
+    return;
+
+    catch h {
+        jump h@interact;
+    };
+}
+
+//dial座席 只是呼入的用
+macro interact_dial_agent(cno,exten,crm_id,timeout,param,hcb) {
+    //当macro中需要再次调用macro时必须保存一个${CONTEXT}_hcb防止死循环
+    local ${CONTEXT}_hcb=${hcb};
+    &curl(${IVR_SERVER}/${IVR_PREFIX}/GetAgent?enterpriseId=${enterprise_id}&cno=${cno}&exten=${exten}&crmId=${crm_id},${CONTEXT});
+    //GetAgent接口会返回dial_interface dial_cno dial_tel agent_login_status agent_device_status
+    if("${dial_interface}" != ""){
+        if("${DEVICE_STATE(${dial_interface})}" = "NOT_INUSE"){
+            if("${exten}" != ""){//如果是分机 不看座席的状态
+                Set(cdr_exten=${exten});
+            }else{//如果是座席或crmid都可以拿到座席登陆和设备状态
+                if("${agent_login_status}" = "online" && "${agent_device_status}" = "idle"){//检查座席是否置忙
+                
+                }else{
+                    Set(DIALSTATUS=BADSTATUS);
+                    return;
+                }
+            }
+            Set(var_cdr_detail_cno=${dial_cno});
+            Set(var_cdr_detail_callee_number=${dial_tel});
+            Set(cdr_bridged_cno=${dial_cno});
+            Set(SHARED(transfer_cno)=${dial_cno});
+            Set(cdr_client_number=${dial_tel});
+			Set(cdr_status=${CDR_STATUS_IB_AGENT_CALLED});
+
+            if("${cdr_call_type}" = "${CALL_TYPE_IB}" || "${cdr_call_type}" = "${CALL_TYPE_WEB400_IB}"){
+                Set(var_cdr_detail_call_type=${CALL_TYPE_IB_CALL_CLIENT});
+            }else{
+                Set(var_cdr_detail_call_type=${CALL_TYPE_OB_CALL_CLIENT});
+            }
+            if("${STAT(e,${MIXMONITOR_FILENAME})}" != "1" && "${is_record_ivr}" != "1") {
+                Set(LOCAL(monitor_file)=${enterprise_id}-${STRFTIME(${cdr_start_time},,%Y%m%d%H%M%S)}-${cdr_customer_number}-${cdr_client_number}-record-${UNIQUEID});
+                NoOp(~~~ ${is_record_ivr} ~~~);
+                MixMonitor(${monitor_file}.wav,abW(-1),/bin/cp ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${LOCAL_BACKUP_PATH}/;/bin/mv ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${VOICE_MERGE}/);
+                 Set(cdr_record_file=${monitor_file}.mp3);
+            }
+            &add_sip_header(${IVR_SERVER},0,CCIC2,${enterprise_id},1,${MASTER_CHANNEL(router_clid_call_type)},${CONTEXT}); // 只呼入所以router_clid_call_type已经设置
+            if("${${cur_node}_dial_timeout}" != "") {
+                timeout=${${cur_node}_dial_timeout};
+            }
+            Dial(${dial_interface},${timeout},${param});
+            if("${DIALSTATUS}" != "ANSWER") {
+                if("${STAT(e,${MIXMONITOR_FILENAME})}" != "1") {
+			        if("${is_record_ivr}" != "1") { // 排除web400,且开启了录制ivr功能
+                        Set(cdr_record_file=);
+                    }
+                }
+            }
+            Set(var_cdr_detail_cno=);
+            Set(var_cdr_detail_callee_number=);
+        }else{
+            Set(DIALSTATUS=BADSTATUS);
+        }
+    }else{
+        Set(DIALSTATUS=NOAGENT);
+    }
+    return;
+
+    catch h {
+        if("${DIALSTATUS}" != "ANSWER") {
+            if("${STAT(e,${MIXMONITOR_FILENAME})}" != "1") {
+			    if("${is_record_ivr}" != "1") { // 排除web400,且开启了录制ivr功能
+                    Set(cdr_record_file=);
+                }
+            }
+        }
+
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+}
+
+macro interact_call_multi_cno_agent(cno,exten,crm_id,timeout,option,call_sequence,dial_num,hcb){
+    local ${CONTEXT}_hcb=${hcb};
+    local i=;
+    local sub_cno=;
+    if("${call_sequence}" = "1"){
+         for(i=1;${i}<=${dial_num};i=${i}+1){
+             Set(sub_cno=${CUT(cno,;,${i})});
+             if(!${ISNULL(${sub_cno})}){ 
+                 &interact_dial_agent(${sub_cno},${exten},${crm_id},${timeout},${option},${CONTEXT});
+                 if("${DIALSTATUS}" = "ANSWER") {
+                     break;
+                 }
+             }
+         }      
+    }else{
+        local sub_dial_num=${dial_num};
+        local leave_cno=${cno};
+        local j=;
+        local j_left=;
+        local j_right=;
+        for(i=1;${i}<=${dial_num};i=${i}+1){
+            Set(j=${RAND(1,${sub_dial_num})});
+            Set(sub_cno=${CUT(leave_cno,;,${j})});
+            if(!${ISNULL(${sub_cno})}){ 
+                &interact_dial_agent(${sub_cno},${exten},${crm_id},${timeout},${option},${CONTEXT});
+                if("${DIALSTATUS}" = "ANSWER") {
+                    break;
+                }
+            }
+            Set(j_left=${MATH(${j}-1,int)});
+            Set(j_right=${MATH(${j}+1,int)});
+            Set(leave_cno=${CUT(leave_cno,;,-${j_left}&${j_right}-)});
+            Set(sub_dial_num=${MATH(${sub_dial_num}-1,int)});
+        }
+    }
+
+    catch h {
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };    
+}
+
+macro interact_call_multi_crm_id_agent(cno,exten,crm_id,timeout,option,call_sequence,dial_num,hcb){
+    local ${CONTEXT}_hcb=${hcb};
+    local i=;
+    local sub_crm_id=;
+    Set(sub_crm_id=${CUT(crm_id,;,${i})});
+    &curl(${IVR_SERVER}/interface/client/GetCnoByCrmId?enterpriseId=${enterprise_id}&crmIds=${crm_id},${CONTEXT});
+    &interact_call_multi_cno_agent(${cnoString},${exten},,${timeout},${option},${call_sequence},${cnoCount},${CONTEXT});
+
+    catch h {
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+
+}
+
+macro interact_ivr_call_agent(cno,exten,crm_id,option,call_sequence,dial_num,hcb){
+    local ${CONTEXT}_hcb=${hcb};
+    local timeout=${DEFAULT_DIAL_TIMEOUT};
+    if("${dial_timeout}" != ""){
+        timeout=${dial_timeout};
+    }
+    if("${cno}" != ""){
+        &interact_call_multi_cno_agent(${cno},${exten},${crm_id},${timeout},tTgU(interact_agent_bridge)${option},${call_sequence},${dial_num},${CONTEXT});
+    }else{
+        &interact_call_multi_crm_id_agent(${cno},${exten},${crm_id},${timeout},tTgU(interact_agent_bridge)${option},${call_sequence},${dial_num},${CONTEXT});
+    }
+    Set(call_agent_status=);
+    NoOp(${DIALSTATUS});
+    if("${DIALSTATUS}" = "ANSWER"){ //如果座席接听了
+        //并且mark为空既不是咨询也不转移也不是三方
+        if("${cdr_mark}" != "${CALL_MARK_TRANSFER}" && "${cdr_mark}" != "${CALL_MARK_CONSULT}"){
+            //如果设置了挂机自动满意度调查or前台发送了满意度调查请求，执行满意度调查代码
+            if("${is_investigation_auto}" = "1" || "${is_investigation}" = "1"){
+                &interact_investigation();
+            }
+        }
+        Hangup();
+    }else if("${DIALSTATUS}" = "BADSTATUS"){//这里说明没有呼叫
+        Set(call_agent_status=BADSTATUS);//此函数返回附带call_agent_status通道变量
+        return;
+    }else if("${DIALSTATUS}" = "NOAGENT"){//这里说明没有找到座席
+        Set(call_agent_status=NOAGENT);//此函数返回附带call_agent_status通道变量
+        return;
+    }else if("${DIALSTATUS}" = "NOANSWER"){
+        Set(call_agent_status=NOANSWER);
+        return;
+    }else if("${DIALSTATUS}" = "BUSY"){
+        Set(call_agent_status=BADSTATUS);
+        return;
+    }else{//呼叫过了失败了
+        Hangup();
+    }
+    Hangup();
+    return;
+
+    catch h {
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+}
+//呼叫座席代码，输入参数为cno座席号，exten分机号，crm_id座席crmid中按此顺序选一个使用
+macro interact_call_agent(cno,exten,crm_id,option,hcb) {
+    //当macro中需要再次调用macro时必须保存一个${CONTEXT}_hcb防止死循环
+    local ${CONTEXT}_hcb=${hcb};
+    local timeout=${DEFAULT_DIAL_TIMEOUT};
+    if("${dial_timeout}" != ""){
+        timeout=${dial_timeout};
+    }
+
+    &interact_dial_agent(${cno},${exten},${crm_id},${timeout},tTgU(interact_agent_bridge)${option},${CONTEXT});
+    Set(call_agent_status=);
+    NoOp(${DIALSTATUS});
+    if("${DIALSTATUS}" = "ANSWER"){ //如果座席接听了
+        //并且mark为空既不是咨询也不转移也不是三方
+        if("${cdr_mark}" != "${CALL_MARK_TRANSFER}" && "${cdr_mark}" != "${CALL_MARK_CONSULT}"){
+            //如果设置了挂机自动满意度调查or前台发送了满意度调查请求，执行满意度调查代码
+            if("${is_investigation_auto}" = "1" || "${is_investigation}" = "1"){
+                &interact_investigation();
+            }
+        }
+        Hangup();
+    }else if("${DIALSTATUS}" = "BADSTATUS"){//这里说明没有呼叫
+        Set(call_agent_status=BADSTATUS);//此函数返回附带call_agent_status通道变量
+        return;
+    }else if("${DIALSTATUS}" = "NOAGENT"){//这里说明没有找到座席
+        Set(call_agent_status=NOAGENT);//此函数返回附带call_agent_status通道变量
+        return;
+    }else if("${DIALSTATUS}" = "NOANSWER"){
+        Set(call_agent_status=NOANSWER);
+        return;
+    }else if("${DIALSTATUS}" = "BUSY"){
+        Set(call_agent_status=BADSTATUS);
+        return;
+    }else{//呼叫过了失败了
+        Hangup();
+    }
+    Hangup();
+    return;
+
+    catch h {
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+}
+
+context macro-interact_queue_bridge {
+    s=> {
+        Set(cdr_answer_time=${EPOCH});
+        NoOp(${CDR(start)});
+        NoOp(${STRPTIME(${CDR(start)},,%Y-%m-%d %H:%M:%S)});
+        Set(cdr_start_time=${STRPTIME(${CDR(start)},,%Y-%m-%d %H:%M:%S)});
+        NoOp(${MEMBERNAME});
+        Set(cno=${MEMBERNAME:${ENTERPRISE_ID_LEN}});
+        if(${ISNULL(${MASTER_CHANNEL(first_cno)})}) {
+            Set(MASTER_CHANNEL(first_cno)=${cno});
+		}
+        if(${ISNULL(${MASTER_CHANNEL(first_queue_name)})}) {
+            Set(MASTER_CHANNEL(first_queue_name)=${cur_queue});
+		}
+		if("${cdr_detail_cno}" != "${cno}") {
+            Set(cdr_detail_cno=${cno});
+            Set(cdr_detail_callee_number=${MASTER_CHANNEL(cdr_client_number)});
+        }
+    };
+}
+//呼入呼叫队列中有座席接听后执行的代码（执行在客户侧channel上）
+macro interact_queue_bridge(){
+    if("${MASTER_CHANNEL(cdr_call_type)}" = "${CALL_TYPE_IB}" || "${MASTER_CHANNEL(cdr_call_type)}" = "${CALL_TYPE_WEB400_IB}"){
+        Set(MASTER_CHANNEL(cdr_status)=${CDR_STATUS_IB_BRIDGED});
+    }else{
+        Set(MASTER_CHANNEL(cdr_status)=${CDR_STATUS_OB_BRIDGED});
+    }
+    if("${MASTER_CHANNEL(cdr_record_file)}" == "") {
+        Set(MASTER_CHANNEL(cdr_record_file)=${MASTER_CHANNEL(record_file)});
+    }
+    //如果设置了队列语音报工号，就播放一声嘀（2000号话务员为您服务已经在客户侧channel播放过了）
+    if("${queue_say_cno}" = "1"){
+        Playback(beep);
+    }
+
+    //接听后即将座席状态置为整理忙
+    PauseQueueMember(,${MASTER_CHANNEL(MEMBERINTERFACE)},,pauseWrapup);
+	if("${MASTER_CHANNEL(cdr_record_file)}" == "") {
+        Set(MASTER_CHANNEL(cdr_record_file)=${MASTER_CHANNEL(record_file)});
+    }
+    return;
+    catch h {
+        jump h@interact;
+    };
+}
+
+//呼叫队列函数，输入为队列名比如3000001002
+macro interact_call_queue(queue,hcb) {
+    local ${CONTEXT}_hcb=${hcb};
+    //获取队列参数：超时时间queue_timeout和是否需要语音报工号queue_say_cno
+    &curl(${IVR_SERVER}/${IVR_PREFIX}/GetQueueParam?enterpriseId=${enterprise_id}&queue=${queue},${CONTEXT});
+    timeout=${DEFAULT_QUEUE_TIMEOUT};
+    if("${queue_timeout}" != ""){
+        timeout=${queue_timeout};
+    }
+    //如果设置了主叫记忆功能，先去查主叫记忆接口，如果有记忆数据，则queue_remember_member设置为记忆的座席名30000012001
+    if("${is_remember_call}" = "1"){
+        &curl(${IVR_SERVER}/${IVR_PREFIX}/GetRememberCall?enterpriseId=${enterprise_id}&queue=${queue}&customerNumber=${cdr_customer_number},${CONTEXT});
+    }
+    if("${queue_say_cno}" == "1"){
+        Set(play_agent=agent_hold);
+    }
+    Set(cdr_join_queue_time=${EPOCH});
+    Set(cdr_queue_name=${queue});
+    /* set cdr_status from app_queues.c 不再从dialplan设置，这样更精准知道是否在队列中呼叫了座席
+    if("${cdr_call_type}" = "${CALL_TYPE_IB}" || "${cdr_call_type}" = "${CALL_TYPE_WEB400_IB}"){
+        Set(cdr_status=${CDR_STATUS_IB_AGENT_CALLED});
+    }
+    */
+    if("${cdr_call_type}" = "${CALL_TYPE_IB}" || "${cdr_call_type}" = "${CALL_TYPE_WEB400_IB}"){
+        Set(var_cdr_detail_call_type=${CALL_TYPE_IB_CALL_CLIENT});
+    }else{
+        Set(var_cdr_detail_call_type=${CALL_TYPE_OB_CALL_CLIENT});
+    }
+    if("${queue_vip_support}" ="1"){
+        Set(QUEUE_PRIO=${cdr_customer_vip});
+    }else{
+        Set(QUEUE_PRIO=0);
+    }
+
+    if("${cdr_mark}" = "${CALL_MARK_TRANSFER}") {
+		if(!${ISNULL(first_cno)}) {
+			Set(cdr_bridged_cno=${first_cno});
+		}
+	}
+    Set(__cur_queue=${queue});//cur_queue在channelManager中使用，用来座席ringing时推送
+    if(${ISNULL(${cdr_mark})}){
+        Set(called_queue_remember=${queue});
+    }
+    &add_sip_header(${IVR_SERVER},0,CCIC2,${enterprise_id},1,${MASTER_CHANNEL(router_clid_call_type)},${CONTEXT}); // 呼入
+    Set(call_queue_time=${STRFTIME(${EPOCH},,[%Y-%m-%d@%H:%M:%S])});
+    Set(unique_prefix=------${call_queue_time}--${cdr_customer_number}--${UNIQUEID}--${queue}------);
+    if("${STAT(d,/var/log/asterisk/queue_status)}" == "0") {
+        System(/bin/sh -c "mkdir -p /var/log/asterisk/queue_status");
+    }
+    System(/bin/echo ${unique_prefix} >> ${QUEUE_STATUS_LOG}-`date +%Y-%m-%d` && /usr/sbin/asterisk -rx 'queue show ${queue}' >> ${QUEUE_STATUS_LOG}-`date +%Y-%m-%d`);
+    NoOp(SYSTEMSTATUS:${SYSTEMSTATUS});
+	NoOp(~~~ ${cdr_record_file} ~~~);
+    Queue(${queue},tTc,,${play_agent},${timeout},agi://${AGI_SERVER}:${AGI_PORT}/queue.agi,interact_queue_bridge,interact_queue_bridge,,${queue_continue_position});
+    NoOp(${AGISTATUS});
+    if("${QUEUESTATUS}" != "CONTINUE") {
+        if("${first_queue_name}" != "") {
+            Set(cdr_queue_name=${first_queue_name});
+        }
+    }
+    if(("${QUEUESTATUS}" == "JOINEMPTY")||("${QUEUESTATUS}" == "FULL")) {
+        NoOp(~~~~cdr_mark:${cdr_mark}~~~~);
+        if("${cdr_mark}" == "${CALL_MARK_ENTER_IVR}") {
+            Set(cdr_mark=${CALL_MARK_QUEUE_FULL}); // 首次进入，队列空/满时溢出
+        }
+		if("${QUEUESTATUS}" == "JOINEMPTY") {
+            QueueLog(${queue},${UNIQUEID},NONE,EXITWITHEMPTY,JOINEMPTY);
+        }
+        if("${QUEUESTATUS}" == "FULL") {
+            QueueLog(${queue},${UNIQUEID},NONE,EXITWITHFULL,FULL);
+        }
+    }
+	if("${QUEUESTATUS}" == "TIMEOUT") {
+		if("${cdr_mark}" == "${CALL_MARK_ENTER_IVR}") {
+			Set(cdr_mark=${CALL_MARK_QUEUE_FULL});
+	    }
+    }
+    //从队列中推出后清空cur_queue字段，防止再次呼叫座席时能取到队列
+    Set(__cur_queue=);
+    NoOp(${QUEUESTATUS});
+    if("${QUEUESTATUS}" = "CONTINUE"){//队列中有座席接了，并且座席侧先挂机了
+        //并且mark为空既不是咨询也不转移也不是三方
+        if("${cdr_mark}" != "${CALL_MARK_TRANSFER}" && "${cdr_mark}" != "${CALL_MARK_CONSULT}"){
+            //如果设置了挂机自动满意度调查or前台发送了满意度调查请求，执行满意度调查代码
+            if("${is_investigation_auto}" = "1" || "${is_investigation}" = "1"){
+                //如果座席已经和客户通话过。
+                if("${cdr_status}" = "${CDR_STATUS_IB_BRIDGED}" || "${cdr_status}" = "${CDR_STATUS_OB_BRIDGED}"){
+                    &interact_investigation();
+                }
+            }
+        }
+        Hangup();
+    }
+    return;
+
+    catch h {
+        NoOp(~~~~QUEUESTATUS:${QUEUESTATUS}~~~~);
+        if("${cdr_mark}" = "${CALL_MARK_TRANSFER}"){
+            if("${direct_call_agent}" == "2") {
+                Set(cdr_bridged_cno=${var_cdr_detail_cno});
+                Set(cdr_client_number=${var_cdr_detail_callee_number});
+                Set(cdr_queue_name=);
+            } else {
+                Set(__cdr_queue_name=${first_queue_name});
+                Set(__cdr_bridged_cno=${first_cno});
+            }
+        }
+        if(("${QUEUESTATUS}" == "") && ("${cdr_mark}" == "${CALL_MARK_ENTER_IVR}")) {
+            Set(cdr_mark=${CALL_MARK_QUEUE_ABANDON});// 首次进入队列后ABANDON 放弃
+        }
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+}
+
+//ivr中播放节点
+macro interact_ivr_play() {
+    NoOp(${cur_node});
+    NoOp(${${cur_node}_play_times});
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    
+    Set(innodetime=${EPOCH});
+	NoOp(${EVAL(${${cur_node}_play_times})});
+    if("${EVAL(${${cur_node}_play_times})}" != ""){
+        Set(cur_node_play_times=${EVAL(${${cur_node}_play_times})});
+    }else{
+        Set(cur_node_play_times=1);
+    }
+    for(y=0; ${y} < ${cur_node_play_times}; y=${y} + 1){
+        for(x=1;${x}<=${${cur_node}_play_voice_count};x=${x}+1){
+            Set(${cur_node}_play_type=${CUT(${cur_node}_play_voice_files,\,,${x})});
+            Set(${cur_node}_play_type=${CUT(${cur_node}_play_type,;,1)});
+            NoOp(${${cur_node}_play_type});
+            switch(${${cur_node}_play_type}) {    //播放节点类型1:语音文件 2:数字 3:数目 4:tts 5:语音变量 6:数字变量 7:数目变量 8:tts变量
+            case 1:    //1:语音文件
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file=${CUT(play_file,;,2)});
+                Playback(${play_file});  //对应play文件名称
+                break;
+            case 2:    // 2:数字
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file=${CUT(play_file,;,2)});
+                SayDigits(${play_file});
+                break;
+            case 3:    // 3:数目
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file=${CUT(play_file,;,2)});
+                SayNumber(${play_file});
+                break;
+            case 4:    // 4:tts
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file=${CUT(play_file,;,2)});
+                System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${play_file}");
+                NoOp(${SYSTEMSTATUS});
+                if("${SYSTEMSTATUS}" = "SUCCESS"){
+                    System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${play_file}");
+                    NoOp(${SYSTEMSTATUS});
+                }
+                local file=${MD5(${play_file})};
+                Playback(${TTS_SOUND_PATH}/${file});
+                break;
+            case 5:    // 5:语音变量
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file_type=${CUT(play_file,;,2)});
+                Set(play_file=${CUT(play_file,;,3)});
+                if("${${EVAL(${play_file})}}" != ""){ 
+                    if("${play_file_type}" = "1"){
+                        Playback(${enterprise_id}/${${EVAL(${play_file})}});  //对应play文件名称
+                    }else{
+                        Playback(${${EVAL(${play_file})}});
+                    }
+                }
+                break;
+            case 6:    // 6:数字变量
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file=${CUT(play_file,;,2)});
+                if("${${EVAL(${play_file})}}" != ""){
+                    SayDigits(${${EVAL(${play_file})}});
+                }
+                break;
+            case 7:    // 7:数目变量
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file=${CUT(play_file,;,2)});
+                if("${${EVAL(${play_file})}}" != ""){
+                    SayNumber(${${EVAL(${play_file})}});
+                }
+                break;
+            case 8:    // 8:tts变量
+                Set(play_file=${CUT(${cur_node}_play_voice_files,\,,${x})});
+                Set(play_file=${CUT(play_file,;,2)});
+                if("${${EVAL(${play_file})}}" != ""){
+                    System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${${EVAL(${play_file})}}");
+                    NoOp(${SYSTEMSTATUS});
+                    if("${SYSTEMSTATUS}" = "SUCCESS"){
+                        System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${${EVAL(${play_file})}}");
+                        NoOp(${SYSTEMSTATUS});
+                    }
+                    local file=${MD5(${${EVAL(${play_file})}})};
+                    Playback(${TTS_SOUND_PATH}/${file});
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    cur_node=${${cur_node}_next};    //cur_node_next 配置的下一节点是？
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr选择节点
+macro interact_ivr_select() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    local retry=0;
+    local key_pressed=0;
+    Set(innodetime=${EPOCH});
+    Set(ivr_select_input=);
+    Set(${cur_node}_select_file=);
+    for(x=1;${x}<=${${cur_node}_select_voice_count};x=${x}+1){
+        Set(${cur_node}_select_type=${CUT(${cur_node}_select_voice_files,\,,${x})});
+        Set(${cur_node}_select_type=${CUT(${cur_node}_select_type,;,1)});
+        NoOp(${${cur_node}_select_type});
+        switch(${${cur_node}_select_type}) {    //播放节点类型1:语音文件 2:数字 3:数目 4:tts 5:语音变量 6:数字变量 7:数目变量 8:tts变量
+        case 1:    //1:语音文件
+            Set(select_file=${CUT(${cur_node}_select_voice_files,\,,${x})});
+            Set(select_file=${CUT(select_file,;,2)});
+            if("${${cur_node}_select_file}" = ""){
+                Set(${cur_node}_select_file=${select_file});
+            }else{
+                Set(${cur_node}_select_file=${${cur_node}_select_file}&${select_file});
+            }
+            break;
+        case 2:    // 2:数字
+            Set(select_file=${CUT(${cur_node}_select_voice_files,\,,${x})});
+            Set(select_file=${CUT(select_file,;,2)});
+            Set(length=${LEN(${select_file})});
+            local file=;
+            for(i=0;${i}<${length};i=${i}+1){
+                Set(sub_num=${select_file:${i}:1});
+                if("${i}"="0"){
+                    file="digits/${sub_num}";
+                }else{
+                    file="${file}&digits/${sub_num}";
+                }
+            }
+            if("${${cur_node}_select_file}" = ""){
+                Set(${cur_node}_select_file=${file});
+            }else{
+                Set(${cur_node}_select_file=${${cur_node}_select_file}&${file});
+            }
+            break;
+        case 4:    // 4:tts
+            Set(select_file=${CUT(${cur_node}_select_voice_files,\,,${x})});
+            Set(select_file=${CUT(select_file,;,2)});
+            if(${retry} = 0) {
+                System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${select_file}");
+                NoOp(${SYSTEMSTATUS});
+            }
+            if("${SYSTEMSTATUS}" = "SUCCESS"){
+                if(${retry} = 0) {
+                    System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${select_file}");
+                    NoOp(${SYSTEMSTATUS});
+                }
+            }
+            local file=${MD5(${select_file})};
+            if("${${cur_node}_select_file}" = ""){
+                Set(${cur_node}_select_file=${TTS_SOUND_PATH}/${file});
+            }else{
+                Set(${cur_node}_select_file=${${cur_node}_select_file}&${TTS_SOUND_PATH}/${file});
+            }
+            break;
+        case 5:    // 5:语音变量
+            Set(select_file=${CUT(${cur_node}_select_voice_files,\,,${x})});
+            set(select_file_type=${CUT(select_file,;,2)});
+            Set(select_file=${CUT(select_file,;,3)});
+            if("${${EVAL(${select_file})}}" != ""){
+                if("${select_file_type}" = "1"){
+                    Set(select_file=${enterprise_id}/${${EVAL(${select_file})}});
+                }else{
+                    Set(select_file=${${EVAL(${select_file})}});
+                }
+                if("${${cur_node}_select_file}" = ""){
+                    Set(${cur_node}_select_file=${select_file});
+                }else{
+                    Set(${cur_node}_select_file=${${cur_node}_select_file}&${select_file});
+                }
+            }
+            break;
+        case 6:    // 6:数字变量
+            Set(select_file=${CUT(${cur_node}_select_voice_files,\,,${x})});
+            Set(select_file=${CUT(select_file,;,2)});
+            if("${${EVAL(${select_file})}}" != ""){
+                Set(length=${LEN(${${EVAL(${select_file})}})});
+                local file=;
+                for(i=0;${i}<${length};i=${i}+1){
+                    Set(sub_num=${${EVAL(${select_file})}:${i}:1});
+                    if("${i}"="0"){
+                        file="digits/${sub_num}";
+                    }else{
+                        file="${file}&digits/${sub_num}";
+                    }
+                }
+                if("${${cur_node}_select_file}" = ""){
+                    Set(${cur_node}_select_file=${file});
+                }else{
+                    Set(${cur_node}_select_file=${${cur_node}_select_file}&${file});
+                }
+            }
+            break;
+        case 8:    // 8:tts变量
+            Set(select_file=${CUT(${cur_node}_select_voice_files,\,,${x})});
+            Set(select_file=${CUT(select_file,;,2)});
+            if("${${EVAL(${select_file})}}" != ""){
+                if(${retry} = 0) {
+                    System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${${EVAL(${select_file})}}");
+                    NoOp(${SYSTEMSTATUS});
+                }
+                if("${SYSTEMSTATUS}" = "SUCCESS"){
+                    if(${retry} = 0) {
+                        System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${${EVAL(${select_file})}}");
+                        NoOp(${SYSTEMSTATUS});
+                    }
+                }
+                local file=${MD5(${${EVAL(${select_file})}})};
+                if("${${cur_node}_select_file}" = ""){
+                    Set(${cur_node}_select_file=${TTS_SOUND_PATH}/${file});
+                }else{
+                    Set(${cur_node}_select_file=${${cur_node}_select_file}&${TTS_SOUND_PATH}/${file});
+                }
+            }
+        default:
+            break;
+        }
+    }
+    Set(cur_node_select_retries=${EVAL(${${cur_node}_select_retries})});
+    if("${cur_node_select_retries}" == ""){
+        Set(cur_node_select_retries=3);
+    }
+    while(${retry} < ${cur_node_select_retries}){    //cur_node_select_retries 重试次数 
+        Read(res1,${${cur_node}_select_file},1,n,1,${DEFAULT_SELECT_TIMEOUT});
+        Set(ivr_select_input=${res1});
+
+        if("${LEN(${res1})}" = "1"){
+            key_pressed=1;
+            if("${${cur_node}_select_${res1}_next}" != ""){          //只有一个按键，按的哪个就跳到哪个对应的节点去
+                cur_node=${${cur_node}_select_${res1}_next};
+                break;
+            }else{
+                if("${${cur_node}_select_multi_key_type}" != "0"){  //多余一个按键时的类型 0:不允许 1:座席号 2:分机号 3:队列号 4:crm_id
+                    Read(res2,void_voice,0,n,1,${DEFAULT_SELECT_TIMEOUT});
+                    Set(ivr_select_input=${ivr_select_input}${res2});
+                    if("${${cur_node}_select_client_voice}" != ""){
+                        Set(dial_option=A(${${cur_node}_select_client_voice}));
+                    }
+                    NoOp(${${cur_node}_select_multi_key_type});
+                    switch(${${cur_node}_select_multi_key_type}){      //如果是多个按键的情况下
+                    case 1://1:座席号
+                        &curl(${IVR_SERVER}/${IVR_PREFIX}/GetAgent?enterpriseId=${enterprise_id}&cno=${res1}${res2}&exten=&crmId=,${CONTEXT});
+                        if("${dial_interface}" != ""){
+                            &interact_call_agent(${res1}${res2},,,${dial_option},${CONTEXT});
+                            if("${call_agent_status}" = "BADSTATUS"){
+                                Playback(dcq_seatbusy);//座席正忙请稍后再拨
+                                Hangup();
+                            }else if("${call_agent_status}" = "NOAGENT"){
+                                if("${${cur_node}_select_error_file}" != ""){
+                                    Playback(${${cur_node}_select_error_file});
+                                }else{
+                                    Playback(dcq_wrongnumber);  //座席号不存在，请重试
+                                }
+                            }
+                        }else{
+                            if("${dial_cno_status}" == "offline"){
+                                if("${${cur_node}_select_error_file}" != ""){
+                                    Playback(${${cur_node}_select_error_file});
+                                }else{
+                                    Playback(seat_busy_retry_ast2);
+                                }
+                            }else{
+                                if("${${cur_node}_select_error_file}" != ""){
+                                    Playback(${${cur_node}_select_error_file});
+                                }else{
+                                    Playback(dcq_wrongnumber);
+                                }
+                            }
+                        }
+                        break;
+                    case 2://2:分机号
+                        //如果转分机，不发ringing
+                        var_noringing=1;
+                        &interact_call_agent(,${res1}${res2},,${dial_option},${CONTEXT});
+                        if("${call_agent_status}" = "BADSTATUS"){
+                            Playback(dcq_seatbusy);//座席正忙请稍后再拨
+                            Hangup();
+                        }else if("${call_agent_status}" = "NOAGENT"){
+                            if("${${cur_node}_select_error_file}" != ""){
+                                Playback(${${cur_node}_select_error_file});
+                            }else{
+                                Playback(dcq_wrongnumber);//座席号不存在，请重试
+                            }
+                        }
+                        break;
+                    case 3://3:队列号
+                        if(${LEN(${res2})} = 1){
+                            res1=00${res1};
+                        }else if(${LEN(${res2})} = 2){
+                            res1=0${res1};
+                        }
+                        NoOp(${QUEUE_EXISTS(${enterprise_id}${res1}${res2})});
+                        if("${QUEUE_EXISTS(${enterprise_id}${res1}${res2})}" = "0"){
+                            if("${${cur_node}_select_error_file}" != ""){
+                                Playback(${${cur_node}_select_error_file});
+                            }else{
+                                Playback(press_error_and_try);
+                            }
+                        }else{
+                            Set(queue_continue_position=);
+queue_start:
+                            &interact_call_queue(${enterprise_id}${res1}${res2},${CONTEXT});
+
+                            //根据队列返回状态进行溢出
+                            switch(${QUEUESTATUS}){
+                            case TIMEOUT:       //超时
+                                //如果做继续等待，然后仍然排在溢出之前未知在这里写代码
+                                Read(res,continue_press1,1,n,1,${DEFAULT_SELECT_TIMEOUT});
+                                if("${res}" = "1"){
+                                    queue_continue_position=${QUEUEPOSITION};
+                                    goto queue_start;
+                                }
+                                Playback(all_agent_busy);
+                                Hangup();
+                                break;
+                            case FULL:      //队列满
+                                Playback(all_agent_busy);
+                                Hangup();
+                                break;
+                            case JOINEMPTY:     //队列空
+                                Playback(all_agent_busy);
+                                Hangup();
+                                break;
+                            default:
+                                Hangup();
+                            }
+                        }
+                        break;
+                    case 4://4:crm_id
+                        &interact_call_agent(,,${res1}${res2},${dial_option},${CONTEXT});
+                        if("${call_agent_status}" = "BADSTATUS"){
+                            Playback(dcq_seatbusy);//座席正忙请稍后再拨
+                            Hangup();
+                        }else if("${call_agent_status}" = "NOAGENT"){
+                            if("${${cur_node}_select_error_file}" != ""){
+                                Playback(${${cur_node}_select_error_file});
+                            }else{
+                                Playback(dcq_wrongnumber);//座席号不存在，请重试
+                            }
+                        }
+                        break;
+                    case 6://tel group
+                        Set(tel_set_tel=);
+                        &curl("${IVR_SERVER}/${IVR_PREFIX}/GetTelSet?enterpriseId=${enterprise_id}&telSet=${res1}${res2}&type=ivr",${CONTEXT});
+                        if("${cdr_call_type}" = "${CALL_TYPE_IB}" || "${cdr_call_type}" = "${CALL_TYPE_WEB400_IB}"){
+                            Set(cdr_status=${CDR_STATUS_IB_AGENT_CALLED});
+                        }
+                        Set(var_cdr_detail_call_type=${CALL_TYPE_IB_CALL_CLIENT});
+                        Set(tel_start_time=${EPOCH});
+                        if("${tel_set_tel}" != ""){ //避免号码组无效时出现死循环
+                            if("${STAT(e,${MIXMONITOR_FILENAME})}" != "1" && "${is_record_ivr}" != "1") {
+                                Set(monitor_file=${enterprise_id}-${STRFTIME(${cdr_start_time},,%Y%m%d%H%M%S)}-${cdr_customer_number}-${virtual_client_number}-record-${UNIQUEID});
+                                MixMonitor(${monitor_file}.wav,abW(-1),/bin/cp ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${LOCAL_BACKUP_PATH}/;/bin/mv ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${VOICE_MERGE}/);
+                                Set(cdr_record_file=${monitor_file}.mp3);
+                            }
+                            if("${tel_set_strategy}" = "order"){
+                                while(1){
+                                    for(i=1;${i}<=${tel_set_count};i=${i}+1){
+                                        Set(sub_tel_set_tel=${CUT(tel_set_tel,;,${i})});
+                                        Set(tel_number=${CUT(sub_tel_set_tel,\,,1)});
+                                        Set(tel_time=${CUT(sub_tel_set_tel,\,,2)});
+                                        Set(tel_curr_time=${EPOCH});
+                                        if(${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)}){
+                                            break;
+                                        }
+                                        Set(cdr_client_number=${tel_number});
+                                        Set(var_cdr_detail_callee_number=${tel_number});
+                                        if("${cdr_record_file}" == ""){
+                                            Set(cdr_record_file=${monitor_file}.mp3);
+                                        }
+                                        &interact_dial_tel(${tel_number},${MASTER_CHANNEL(router_clid_call_type)},${tel_time},tTU(interact_dial_bridge)${dial_option},${CONTEXT});
+                                        if("${DIALSTATUS}" == "ANSWER"){
+                                            break;
+                                        }
+                                        if("${pre}" == "" || "${post}" == ""){
+                                            Set(i_left=${MATH(${i}-1,int)});
+                                            Set(i_right=${MATH(${i}+1,int)});
+                                            Set(tel_set_tel=${CUT(tel_set_tel,;,-${i_left}&${i_right}-)});//剔除路由不存在的电话
+                                            Set(tel_set_count=${MATH(${tel_set_count}-1,int)});
+                                            Set(i=${i_left});
+                                        }
+                                        Wait(1);
+                                    }
+                                    Set(tel_curr_time=${EPOCH});
+                                    if("${DIALSTATUS}" == "ANSWER" || ${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)} || ${tel_set_count} < 1){
+                                        break;
+                                    }
+                                    Wait(3);
+                                }
+                            }else{
+                                while(1){
+                                    Set(leave_tel_set_tel=${tel_set_tel});
+                                    local leave_tel_set_count=${tel_set_count};
+                                    local j=;
+                                    local j_left=;
+                                    local j_right=;
+                                    for(i=1;${i}<=${tel_set_count};i=${i}+1){
+                                        Set(j=${RAND(1,${leave_tel_set_count})});
+                                        Set(sub_tel_set_tel=${CUT(leave_tel_set_tel,;,${j})});
+                                        Set(tel_number=${CUT(sub_tel_set_tel,\,,1)});
+                                        Set(tel_time=${CUT(sub_tel_set_tel,\,,2)});
+                                        Set(tel_curr_time=${EPOCH});
+                                        if(${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)}){
+                                            break;
+                                        }
+                                        Set(cdr_client_number=${tel_number});
+                                        Set(var_cdr_detail_callee_number=${tel_number});
+                                        if("${cdr_record_file}" == ""){
+                                            Set(cdr_record_file=${monitor_file}.mp3);
+                                        }
+                                        &interact_dial_tel(${tel_number},${MASTER_CHANNEL(router_clid_call_type)},${tel_time},tTU(interact_dial_bridge)${dial_option},${CONTEXT});
+                                        if("${DIALSTATUS}" == "ANSWER"){
+                                            break;
+                                        }
+                                        Wait(1);
+                                        Set(j_left=${MATH(${j}-1,int)});
+                                        Set(j_right=${MATH(${j}+1,int)});
+                                        if("${pre}" == "" || "${post}" == ""){
+                                            Set(tel_set_tel=${CUT(tel_set_tel,;,-${j_left}&${j_right}-)});//剔除路由不存在的电话
+                                            Set(tel_set_count=${MATH(${tel_set_count}-1,int)});
+                                            Set(i=${MATH(${i}-1,int)});
+                                        }
+                                        Set(leave_tel_set_tel=${CUT(leave_tel_set_tel,;,-${j_left}&${j_right}-)});
+                                        Set(leave_tel_set_count=${MATH(${leave_tel_set_count}-1,int)});
+                                    }
+                                    Set(tel_curr_time=${EPOCH});
+                                    if("${DIALSTATUS}" == "ANSWER" || ${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)} || ${tel_set_count} < 1){
+                                        break;
+                                    }
+                                    Wait(3);
+                                }  
+                            }
+                        }else{
+                            Playback(dcq_wrongnumber);  //座席号不存在，请重试
+                        }
+                        break;
+                    default:
+                        Hangup();
+                    }
+                }else{
+                    if("${${cur_node}_select_error_file}" != ""){
+                        Playback(${${cur_node}_select_error_file});
+                    }else{
+                        Playback(press_error_and_try);  
+                    }
+                }
+            }
+        }
+        retry=${retry} + 1;
+    }
+
+    if("${retry}" = "${cur_node_select_retries}"){     //大于或等于最大次数的时候挂机
+        if("${key_pressed}" == "0" && "${${cur_node}_select_#_next}" != ""){ //如果未按键并且设置了未按键跳转
+            cur_node=${${cur_node}_select_#_next};
+        }else{
+            Hangup();
+        }
+    }
+    if(${ISNULL(${ivr_select_input})}) {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    }else {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH}|${ivr_select_input}|${INPUTSTARTTIME},);
+    }
+    return;
+
+    catch h {
+        if(${ISNULL(${ivr_select_input})}) {
+            Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        }else {
+            Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH}|${ivr_select_input}|${INPUTSTARTTIME});
+        }
+        
+        jump h@interact;
+    };
+}
+
+//ivr时间节点
+macro interact_ivr_time() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    cur_node=${${cur_node}_time_next};
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr时间地区节点
+macro interact_ivr_area() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    cur_node=${${cur_node}_area_next};
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr留言节点
+macro interact_ivr_voicemail() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    Set(__is_voicemail=1); // 进入留言节点标识
+    Answer();
+    //设置留言录音文件名称
+    Set(LOCAL(monitor_file)=${enterprise_id}-${STRFTIME(${cdr_start_time},,%Y%m%d%H%M%S)}-voicemail-${UNIQUEID});
+    if("${cdr_mark}"!= "${CALL_MARK_TRANSFER}") {
+        Set(cdr_mark=${CALL_MARK_VOICEMAIL});
+        Set(cdr_mark_data=${${cur_node}_voicemail_id});
+    }
+    Set(cdr_join_queue_time=0); // 进入voicemail节点后清空该值，防止该值从队列节点带入进来
+    if(${ISNULL(${${cur_node}_voicemail_file})} != 1) {
+        Playback(${${cur_node}_voicemail_file});
+    }
+    Playback(beep);
+    if("${cdr_bridge_time}" == ""){
+        Set(cdr_bridge_time=${EPOCH});
+    }
+    //进行录音
+    Record(${VOICE_MAIL_PATH}/${LOCAL(monitor_file)}.wav,5,180,kq);
+    Set(cdr_record_file=${monitor_file}.mp3); // 正常完成留言，则设置文件名
+    Set(vm_record_over=ok); // 正常完成留言的标记，挂机时用到
+    //使用join_queue_time作为座席录音结束时间
+    //刨除静音检测5秒
+    if("${RECORD_STATUS}" == "SILENCE"){
+        cdr_join_queue_time=${EPOCH}-5;
+    }else{
+        cdr_join_queue_time=${EPOCH};	
+    }
+    //进行录音回放
+    Playback(${VOICE_MAIL_PATH}/${LOCAL(monitor_file)});
+    Hangup();
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        Set(LOCAL(vm_size)=${STAT(s,${VOICE_MAIL_PATH}/${LOCAL(monitor_file)}.wav)});
+        if("${vm_record_over}" != "ok" && ${vm_size} > 44){
+            Set(cdr_record_file=${monitor_file}.mp3); // 通话中非正常挂机，但录音文件大于44字节
+        }
+        jump h@interact;
+    };
+}
+
+//ivr队列节点
+macro interact_ivr_queue() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    if("${${cur_node}_queue_file}" != ""){
+        Playback(${${cur_node}_queue_file});
+    }
+    if("${${cur_node}_queue}" = "" || "${${cur_node}_queue:0:7}" != "${cdr_enterprise_id}"){
+        Hangup();
+        return;
+    }
+    NoOp(${${cur_node}_queue});
+    if("${QUEUE_EXISTS(${${cur_node}_queue})}" = "0"){
+        Hangup();
+        return;
+    }
+    Set(queue_continue_position=);
+queue_start:
+    &interact_call_queue(${${cur_node}_queue},${CONTEXT});
+    if("${overflow}" = ""){     //记录溢出次数
+	overflow=1;
+    }else{
+	overflow=${overflow}+1;
+    }
+    //防止队列无限溢出
+     if(${overflow} > ${QUEUE_MAX_RETRY}){
+       Hangup();
+    }
+    //根据队列返回状态进行溢出
+    switch(${QUEUESTATUS}){
+    case TIMEOUT:       //超时
+        if("${${cur_node}_queue_continue_wait}" = "1"){//如果设置支持继续等待
+            Read(res,continue_press1,1,n,1,2);
+            if("${res}" = "1"){
+                queue_continue_position=${QUEUEPOSITION};
+                goto queue_start;
+            }
+        }
+        if("${${cur_node}_queue_timeout_next}" = ""){
+            Playback(all_agent_busy);
+            Hangup();
+        }
+        cur_node=${${cur_node}_queue_timeout_next};
+        break;
+    case FULL:      //队列满
+        if("${${cur_node}_queue_full_next}" = ""){
+            Playback(all_agent_busy);
+            Hangup();
+        }
+        cur_node=${${cur_node}_queue_full_next};
+        break;
+    case JOINEMPTY:     //队列空
+        if("${${cur_node}_queue_empty_next}" = ""){
+            Playback(all_agent_busy);
+            Hangup();
+        }
+        cur_node=${${cur_node}_queue_empty_next};
+        break;
+    default:
+        Hangup();
+    }
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr传真接收
+macro interact_ivr_fax_receive(){
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+	Set(__is_fax_receive=1); //进入传真接受节点的标识
+	Set(cdr_mark=${CALL_MARK_FAX});
+    if("${${cur_node}_fax_file}" != ""){
+        Playback(${${cur_node}_fax_file});
+    }
+
+    // 返回faxServerIp和faxServerPort
+    &curl("${IVR_SERVER}/${FAX_PREFIX}/faxcInterface!getFaxServer.action?enterpriseId=${enterprise_id}",${CONTEXT});
+    if("${result}" = "success") {
+        SIPAddHeader(X-UNIQUEID:${UNIQUEID}); // 唯一标识
+        SIPAddHeader(X-STARTTIME:${cdr_start_time}); // 呼叫开始时间
+        SIPAddHeader(X-ENTERPRISEID:${enterprise_id}); // 企业号
+        SIPAddHeader(X-TRUNKNUM:${cdr_number_trunk}); // 中继号
+        SIPAddHeader(X-CUSTOMERNUM:${cdr_customer_number}); // 呼入号码
+        SIPAddHeader(X-CALLTYPE:${cdr_call_type});	// 呼叫类型
+        SIPAddHeader(X-JBESERVER:${IVR_SERVER});  // CCIC2分平台JBE地址
+        Dial(SIP/${enterprise_id}@${faxServerIp}:${faxServerPort},20,tU);
+    }
+    Hangup();
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr变量设置节点
+macro interact_ivr_set() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    NoOp(string~~~~~~${${cur_node}_set_string}~~~~~${${cur_node}_set_string_count}~~~~~~~~~);
+    if(${${cur_node}_set_count} > 0) {
+        for(local_x=0;${local_x}<${${cur_node}_set_count};local_x=${local_x}+1) {
+            if("${${cur_node}_set_name_type_${local_x}}" = "1"){
+                if("${${cur_node}_set_value_type_${local_x}}" = "0"){
+                     ${EVAL(${${cur_node}_set_name_${local_x}})}=${EVAL(${${cur_node}_set_value_${local_x}})};
+                }else{
+                     Set(${EVAL(${${cur_node}_set_name_${local_x}})}=${EVAL(${${cur_node}_set_value_${local_x}})});
+                }
+            }else{
+                if("${${cur_node}_set_name_type_${local_x}}" = "2"){
+                    if("${${cur_node}_set_value_type_${local_x}}" = "0"){
+                        GLOBAL(${EVAL(${${cur_node}_set_name_${local_x}})}=${EVAL(${${cur_node}_set_value_${local_x}})});
+                    }else{
+                        Set(GLOBAL(${EVAL(${${cur_node}_set_name_${local_x}})}=${EVAL(${${cur_node}_set_value_${local_x}})}));
+                    }
+                }else{
+                    if("${${cur_node}_set_value_type_${local_x}}" = "0"){
+                        DB(${EVAL(${${cur_node}_set_name_${local_x}})}=${EVAL(${${cur_node}_set_value_${local_x}})});
+                    }else{
+                        Set(DB(${EVAL(${${cur_node}_set_name_${local_x}})}=${EVAL(${${cur_node}_set_value_${local_x}})}));
+                    }
+                }
+            }
+        }
+    }
+    cur_node=${${cur_node}_set_next};
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr收号节点
+macro interact_ivr_read() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    if("${${cur_node}_read_delay}" != "") {
+        Set(READ_SKIP_MS=${${cur_node}_read_delay});
+    }
+    Set(innodetime=${EPOCH});
+    ${cur_node}_read_file=;//防止多次进入时，被叠加设置
+    for(x=1;${x}<=${${cur_node}_read_voice_count};x=${x}+1){
+        Set(${cur_node}_read_type=${CUT(${cur_node}_read_voice_files,\,,${x})});
+        Set(${cur_node}_read_type=${CUT(${cur_node}_read_type,;,1)});
+        NoOp(${${cur_node}_read_type});
+        switch(${${cur_node}_read_type}) {    //播放节点类型1:语音文件 2:数字 3:数目 4:tts 5:语音变量 6:数字变量 7:数目变量 8:tts变量
+        case 1:    //1:语音文件
+            Set(read_file=${CUT(${cur_node}_read_voice_files,\,,${x})});
+            Set(read_file=${CUT(read_file,;,2)});
+            if("${${cur_node}_read_file}" = ""){
+                Set(${cur_node}_read_file=${read_file});
+            }else{
+                Set(${cur_node}_read_file=${${cur_node}_read_file}&${read_file});
+            }
+            break;
+        case 2:    // 2:数字
+            Set(read_file=${CUT(${cur_node}_read_voice_files,\,,${x})});
+            Set(read_file=${CUT(read_file,;,2)});
+            Set(length=${LEN(${read_file})});
+            local file=;
+            for(i=0;${i}<${length};i=${i}+1){
+                Set(sub_num=${read_file:${i}:1});
+                if("${i}"="0"){
+                    file="digits/${sub_num}";
+                }else{
+                    file="${file}&digits/${sub_num}";
+                }
+            }
+            if("${${cur_node}_read_file}" = ""){
+                Set(${cur_node}_read_file=${file});
+            }else{
+                Set(${cur_node}_read_file=${${cur_node}_read_file}&${file});
+            }
+            break;
+        case 4:    // 4:tts
+            Set(read_file=${CUT(${cur_node}_read_voice_files,\,,${x})});
+            Set(read_file=${CUT(read_file,;,2)});
+            System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${read_file}");
+            NoOp(${SYSTEMSTATUS});
+            if("${SYSTEMSTATUS}" = "SUCCESS"){
+                System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${read_file}");
+                NoOp(${SYSTEMSTATUS});
+            }
+            local file=${MD5(${read_file})};
+            if("${${cur_node}_read_file}" = ""){
+                Set(${cur_node}_read_file=${TTS_SOUND_PATH}/${file});
+            }else{
+                Set(${cur_node}_read_file=${${cur_node}_read_file}&${TTS_SOUND_PATH}/${file});
+            }
+            break;
+        case 5:    // 5:语音变量
+            Set(read_file=${CUT(${cur_node}_read_voice_files,\,,${x})});
+            Set(read_file_type=${CUT(read_file,;,2)});
+            Set(read_file=${CUT(read_file,;,3)});
+            if("${${EVAL(${read_file})}}" != ""){
+                if("${read_file_type}" = "1"){
+                    Set(read_file=${enterprise_id}/${${EVAL(${read_file})}});
+                }else{
+                    Set(read_file=${${EVAL(${read_file})}});
+                }
+                if("${${cur_node}_read_file}" = ""){
+                    Set(${cur_node}_read_file=${read_file});
+                }else{
+                    Set(${cur_node}_read_file=${${cur_node}_read_file}&${read_file});
+                }
+            }
+        break;
+        case 6:    // 6:数字变量
+            Set(read_file=${CUT(${cur_node}_read_voice_files,\,,${x})});
+            Set(read_file=${CUT(read_file,;,2)});
+            NoOp(${${EVAL(${read_file})}});
+            if("${${EVAL(${read_file})}}" != ""){
+                Set(length=${LEN(${${EVAL(${read_file})}})});
+                local file=;
+                for(i=0;${i}<${length};i=${i}+1){
+                    NoOp(${EVAL(${read_file})});
+                    Set(sub_num=${${EVAL(${read_file})}:${i}:1});
+                    if("${i}"="0"){
+                        file="digits/${sub_num}";
+                   }else{
+                        file="${file}&digits/${sub_num}";
+                   }
+                }
+                if("${${cur_node}_read_file}" = ""){
+                    Set(${cur_node}_read_file=${file});
+                }else{
+                    Set(${cur_node}_read_file=${${cur_node}_read_file}&${file});
+                }
+            }
+            break;
+        case 8:    // 8:tts变量
+            Set(read_file=${CUT(${cur_node}_read_voice_files,\,,${x})});
+            Set(read_file=${CUT(read_file,;,2)});
+            if("${${EVAL(${read_file})}}" != ""){
+                System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${${EVAL(${read_file})}}");
+                NoOp(${SYSTEMSTATUS});
+                if("${SYSTEMSTATUS}" = "SUCCESS"){
+                    System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${${EVAL(${read_file})}}");
+                    NoOp(${SYSTEMSTATUS});
+                }
+                local file=${MD5(${${EVAL(${read_file})}})};
+                if("${${cur_node}_read_file}" = ""){
+                    Set(${cur_node}_read_file=${TTS_SOUND_PATH}/${file});
+                }else{
+                    Set(${cur_node}_read_file=${${cur_node}_read_file}&${TTS_SOUND_PATH}/${file});
+                }
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    set(old_value=);
+    if(!${ISNULL(${${${cur_node}_read_variable}})}){
+        Set(old_value=${${${cur_node}_read_variable}});
+    }
+    Set(ivr_read_input=);
+    if("${EVAL(${${cur_node}_read_retries})}" != ""){
+        Set(cur_node_read_retries=${EVAL(${${cur_node}_read_retries})});
+    }else{
+        Set(cur_node_read_retries=1);
+    }
+    Read(${${cur_node}_read_variable},${${cur_node}_read_file},${${cur_node}_read_max_digits},n,${cur_node_read_retries},${${cur_node}_read_timeout});
+    Set(ivr_read_input=${${${cur_node}_read_variable}});
+    if(${ISNULL(${ivr_read_input})}){
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    } else {
+        if("${${cur_node}_read_hidden}" = "1"){
+            &replace_pwd(${ivr_read_input},${CONTEXT});
+            Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH}|${REPLACE_STR}|${INPUTSTARTTIME},);
+        }else{
+            Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH}|${ivr_read_input}|${INPUTSTARTTIME},);
+        }
+    }
+    if("${${cur_node}_read_to_root}" = "1" && "${ivr_read_input}" = "0"){
+        cur_node=${start_node};
+    }else{
+        cur_node=${${cur_node}_read_next};
+    }
+    return; 
+    
+    catch h {
+        if(${ISNULL(${ivr_read_input})}){
+            if(!${ISNULL(${${${cur_node}_read_variable}})}){
+				// customer hangup when input part of MAX accept numbers
+                Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH}|${${${cur_node}_read_variable}}|${INPUTSTARTTIME},);
+            } else {
+                // customer hangup without input
+                Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+            }
+        }else {
+            // customer hangup when input MAX numbers, almost never happen
+            Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH}|${ivr_read_input}|${INPUTSTARTTIME},);
+        }
+        if("${old_value}"!=""&&"${${${cur_node}_read_variable}}"=""){
+            Set(${${cur_node}_read_variable}=${old_value});
+        }
+        jump h@interact;
+    };
+}
+
+//ivr等待节点
+macro interact_ivr_wait(){
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    NoOp(${${cur_node}_wait_time});
+    NoOP(${${cur_node}_wait_next});
+    Wait(${${cur_node}_wait_time});
+    cur_node=${${cur_node}_wait_next};
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr分机节点
+macro interact_ivr_branch() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    NoOp(${${cur_node}_branch_expression});
+    local res=${EVAL(${${cur_node}_branch_expression})};
+    if("${res}" = "1"){
+        cur_node=${${cur_node}_branch_true};
+    }else{
+        cur_node=${${cur_node}_branch_false};
+    }
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr对接http接口节点，返回json格式数据，将变量打入通道
+macro interact_ivr_curl() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    NoOp(${${cur_node}_curl_timeout});
+    url_param=${EVAL("${${cur_node}_curl_param}")}; // 参数中含有变量需要二次求值
+    url_retry=${EVAL("${${cur_node}_curl_retry}")};
+    url_sync=${EVAL("${${cur_node}_curl_sync}")};
+    url_addr=${EVAL("${${cur_node}_curl_url}")};
+    url_timeout=${${cur_node}_curl_timeout};
+    NoOp(${${cur_node}_curl_url}?tag=${${cur_node}_curl_tag}&${url_param});
+    CURLOPT(httptimeout)=${${cur_node}_curl_timeout}; // 设置http响应超时时长
+    CURLOPT(conntimeout)=2;// Number of seconds to wait for connection
+    CURLOPT(dnstimeout)=2; // Number of seconds to wait for DNS response
+    //Set(res=${CURL("${${cur_node}_curl_url}?tag=${${cur_node}_curl_tag}&${url_param}")}); // 目前只支持GET方式
+    Set(tmp_url_all=http://${IVR_SERVER}/${IVR_PREFIX}/Curl?method=${${cur_node}_curl_method}&enterpriseId=${enterprise_id}&uniqueId=${CDR(userfield)}&url=${URIENCODE(${url_addr})}&retry=${url_retry}&sync=${url_sync}&timeout=${url_timeout}&params=${URIENCODE(${EVAL(${${cur_node}_curl_param})})}&tag=${URIENCODE(${${cur_node}_curl_tag})});
+    Set(res=${CURL(${tmp_url_all})});
+	if(${LEN(${res})} > ${MAX_CURL_LEN} ){
+        cur_node=${${cur_node}_curl_error};
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        return;
+    }
+    if(${LEN(${res})} = 0 ){
+        cur_node=${${cur_node}_curl_error};
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        return;
+    }
+    Jsonvariables(${res});
+    cur_node=${${cur_node}_curl_next};
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//直接呼叫电话接通时执行代码
+macro interact_dial_bridge(){
+    if("${MASTER_CHANNEL(cdr_call_type)}" = "${CALL_TYPE_IB}" || "${MASTER_CHANNEL(cdr_call_type)}" = "${CALL_TYPE_WEB400_IB}"){
+        Set(MASTER_CHANNEL(cdr_status)=${CDR_STATUS_IB_BRIDGED});
+    }else{
+        Set(MASTER_CHANNEL(cdr_status)=${CDR_STATUS_OB_BRIDGED});
+    }
+    if("${MASTER_CHANNEL(cdr_bridge_time)}" = ""){
+        Set(MASTER_CHANNEL(cdr_bridge_time)=${EPOCH});
+    }
+    Set(cdr_status=${CDR_STATUS_IB_DETAIL_ANSWER});
+    Set(cdr_answer_time=${EPOCH});
+    //workround 子channel的start_time需要再此重新保存一下，原因未知
+    Set(cdr_start_time=${STRPTIME(${CDR(start)},,%Y-%m-%d %H:%M:%S)});
+
+    return;
+
+    catch h {
+
+    };
+}
+
+//直接呼叫电话
+macro interact_dial_tel(tel,router_clid_call_type,timeout,param,hcb) {
+    //当macro中需要再次调用macro时必须保存一个${CONTEXT}_hcb防止死循环
+    local ${CONTEXT}_hcb=${hcb};
+    Set(var_group_callee_number=${tel});
+    //通过GetPrePost接口返回电话的前缀和后缀
+    &curl(${IVR_SERVER}/${IVR_PREFIX}/GetPrePost?enterpriseId=${enterprise_id}&tel=${tel}&routerClidCallType=${MASTER_CHANNEL(router_clid_call_type)},${CONTEXT});
+    if("${pre}" != "" && "${post}" != ""){
+        Set(var_cdr_detail_gw_ip=${post});
+        //local channel方案
+        //Dial(Local/SIP-${pre}${tel}-${post},${timeout},${param});
+        &add_sip_header(${IVR_SERVER},0,CCIC2,${enterprise_id},1,${MASTER_CHANNEL(router_clid_call_type)},${CONTEXT});
+        //if("${GROUP_COUNT(${tel}@platform)}" = "0") {
+        //    Set(var_group_callee_number=${tel});
+            Dial(SIP/${pre}${tel}@${post},${timeout},${param});
+        //} else {
+        //    Set(DIALSTATUS=BADSTATUS);
+        //}
+        if("${DIALSTATUS}" != "ANSWER" && "${STAT(e,${MIXMONITOR_FILENAME})}" != "1") {
+			if("${is_record_ivr}" != "1") { // 排除web400,且开启了录制ivr功能
+                Set(cdr_record_file=);
+            }
+        }
+        //&dial_wrapper(SIP/${pre}${tel}@${post},${timeout},${param},${gmacro},${umacro},${tmacro},${CONTEXT});
+    }
+    //jump ${cexten},${cpriority}@${ccontext};
+    return;
+
+    catch h {
+        if("${DIALSTATUS}" != "ANSWER" && "${STAT(e,${MIXMONITOR_FILENAME})}" != "1") {
+			if("${is_record_ivr}" != "1") { // 排除web400,且开启了录制ivr功能
+                Set(cdr_record_file=);
+            }
+        }
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+}
+//呼叫多个号码
+macro interact_dial_multi_tel(tel,router_clid_call_type,timeout,param,hcb) {
+    //当macro中需要再次调用macro时必须保存一个${CONTEXT}_hcb防止死循环
+    local ${CONTEXT}_hcb=${hcb};
+    local i=1;
+    NoOp(${REGEX(";",${tel})});
+    if("${REGEX(";",${tel})}" == "1"){
+        Set(ltel_num=${FIELDQTY(tel,;)});
+        for(i=1;${i}<=${ltel_num};i=${i}+1){
+            Set(ltel=${CUT(tel,;,${i})});
+            if("${ltel}" != ""){
+                Set(cdr_client_number=${ltel});
+                Set(var_cdr_detail_callee_number=${ltel});
+                if("${STAT(e,${MIXMONITOR_FILENAME})}" != "1" && "${is_record_ivr}" != "1") {
+                    NoOp(~~~ ${cdr_record_file} ~~~);
+                    Set(monitor_file=${enterprise_id}-${STRFTIME(${cdr_start_time},,%Y%m%d%H%M%S)}-${cdr_customer_number}-${cdr_client_number}-record-${UNIQUEID});
+                    MixMonitor(${monitor_file}.wav,abW(-1),/bin/cp ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${LOCAL_BACKUP_PATH}/;/bin/mv ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${VOICE_MERGE}/);
+                    Set(cdr_record_file=${monitor_file}.mp3);
+                }
+                &interact_dial_tel(${ltel},${MASTER_CHANNEL(router_clid_call_type)},${timeout},${param},${CONTEXT});
+                if("${DIALSTATUS}" == "ANSWER"){
+                    break;
+                }
+            }
+        }
+    }else{
+        Set(cdr_client_number=${tel});
+        Set(var_cdr_detail_callee_number=${tel});
+        if("${STAT(e,${MIXMONITOR_FILENAME})}" != "1" && "${is_record_ivr}" != "1") {
+            NoOp(~~~ ${cdr_record_file} ~~~);
+            Set(LOCAL(monitor_file)=${enterprise_id}-${STRFTIME(${cdr_start_time},,%Y%m%d%H%M%S)}-${cdr_customer_number}-${cdr_client_number}-record-${UNIQUEID});
+            MixMonitor(${monitor_file}.wav,abW(-1),/bin/cp ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${LOCAL_BACKUP_PATH}/;/bin/mv ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${VOICE_MERGE}/);
+            Set(cdr_record_file=${monitor_file}.mp3);
+        }
+        &interact_dial_tel(${tel},${MASTER_CHANNEL(router_clid_call_type)},${timeout},${param},${CONTEXT}); 
+    }
+    return;
+
+    catch h {
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+}
+
+//ivr直呼节点
+macro interact_ivr_dial() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    local timeout=${DEFAULT_DIAL_TIMEOUT};
+    if("${${cur_node}_dial_timeout}" != ""){
+        timeout=${${cur_node}_dial_timeout};
+    }
+    local dial_option=;
+    if("${${cur_node}_dial_moh}" != ""){
+        Set(dial_option=m(${${cur_node}_dial_moh}));
+    }
+    if("${${cur_node}_dial_client_voice}" != ""){
+        Set(dial_option=${dial_option}A(${${cur_node}_dial_client_voice}));
+    }
+    Set(innodetime=${EPOCH});
+    Set(ivr_dial_value=${EVAL(${${cur_node}_dial_tel})});
+    if("${REGEX("\,",${ivr_dial_value})}" == "1"){
+        Set(ivr_dial_value=${REPLACE(ivr_dial_value,\,,\;)});
+    }
+    for(x=1;${x}<=${${cur_node}_dial_voice_count};x=${x}+1){
+        Set(${cur_node}_dial_voice_type=${CUT(${cur_node}_dial_voice_files,\,,${x})});
+        Set(${cur_node}_dial_voice_type=${CUT(${cur_node}_dial_voice_type,;,1)});
+        NoOp(${${cur_node}_dial_voice_type});
+        switch(${${cur_node}_dial_voice_type}) {    //播放节点类型1:语音文件 2:数字  4:tts 5:语音变量 6:数字变量  8:tts变量
+        case 1:    //1:语音文件
+            Set(dial_file=${CUT(${cur_node}_dial_voice_files,\,,${x})});
+            Set(dial_file=${CUT(dial_file,;,2)});
+            Playback(${dial_file});  //对应dial文件名称
+            break;
+        case 2:    // 2:数字
+            Set(dial_file=${CUT(${cur_node}_dial_voice_files,\,,${x})});
+            Set(dial_file=${CUT(dial_file,;,2)});
+            SayDigits(${dial_file});
+            break;
+        case 4:    // 4:tts
+            Set(dial_file=${CUT(${cur_node}_dial_voice_files,\,,${x})});
+            Set(dial_file=${CUT(dial_file,;,2)});
+            System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${dial_file}");
+            NoOp(${SYSTEMSTATUS});
+            if("${SYSTEMSTATUS}" = "SUCCESS"){
+                System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${dial_file}");
+                NoOp(${SYSTEMSTATUS});
+            }
+            local file=${MD5(${dial_file})};
+            Playback(${TTS_SOUND_PATH}/${file});
+            break;
+        case 5:    // 5:语音变量
+            Set(dial_file=${CUT(${cur_node}_dial_voice_files,\,,${x})});
+            Set(dial_file_type=${CUT(dial_file,;,2)});
+            Set(dial_file=${CUT(dial_file,;,3)});
+            if("${${EVAL(${dial_file})}}" != ""){
+                if("${dial_file_type}" = "1"){
+                    Playback(${enterprise_id}/${${EVAL(${dial_file})}});  //对应dial文件名称
+                }else{
+                    Playback(${${EVAL(${dial_file})}});
+                }
+            }
+            break;
+        case 6:    // 6:数字变量
+            Set(dial_file=${CUT(${cur_node}_dial_voice_files,\,,${x})});
+            Set(dial_file=${CUT(dial_file,;,2)});
+            if("${${EVAL(${dial_file})}}" != ""){
+                SayDigits(${${EVAL(${dial_file})}});
+            }
+            break;
+        case 8:    // 8:tts变量
+            Set(dial_file=${CUT(${cur_node}_dial_voice_files,\,,${x})});
+            Set(dial_file=${CUT(dial_file,;,2)});
+            if("${${EVAL(${dial_file})}}" != ""){
+                System(${BIN_PATH}/ttsc_break_send_async.sh  "${UNIQUEID}" "${${EVAL(${dial_file})}}");
+                NoOp(${SYSTEMSTATUS});
+                if("${SYSTEMSTATUS}" = "SUCCESS"){
+                    System(${BIN_PATH}/ttsc_break_get.sh "${UNIQUEID}" "${${EVAL(${dial_file})}}");
+                    NoOp(${SYSTEMSTATUS});
+                }
+                local file=${MD5(${${EVAL(${dial_file})}})};
+                Playback(${TTS_SOUND_PATH}/${file});
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    switch(${${cur_node}_dial_type}){
+    case 1:       //普通固话，手机
+        NoOp(${${cur_node}_dial_pre_remind_time});
+        NoOp(${EVAL(${${cur_node}_dial_pre_remind_time})});
+        Set(LIMIT_PLAYAUDIO_CALLEE=yes);
+        Set(LIMIT_PLAYAUDIO_CALLER=yes);
+        Set(LIMIT_PLAYAUDIO_TYPE=MIX);
+        local dial_max_talk_time=${EVAL(${${cur_node}_dial_max_talk_time})};
+        local dial_pre_remind_time=${EVAL(${${cur_node}_dial_pre_remind_time})};
+        if("${dial_max_talk_time}" != "0"&&"${dial_max_talk_time}" != ""){
+            Set(dial_max_talk_time=${MATH(${dial_max_talk_time}*1000,int)});
+            if("${dial_pre_remind_time}" != "0"&&"${dial_pre_remind_time}" != ""){
+                Set(dial_pre_remind_time=${MATH(${dial_pre_remind_time}*1000,int)});
+                if("${${cur_node}_dial_remind_voice}" != ""){
+                    Set(LIMIT_WARNING_FILE=${${cur_node}_dial_remind_voice});
+                }
+                dial_option="${dial_option}L(${dial_max_talk_time}:${dial_pre_remind_time}:)";
+            }else{
+                if("${${cur_node}_dial_remind_voice}" != ""){
+                    Set(LIMIT_WARNING_FILE=${${cur_node}_dial_remind_voice});
+                }
+                dial_option="${dial_option}L(${dial_max_talk_time}::)";
+            }
+        }
+        &interact_ivr_dial_tel(${ivr_dial_value},${timeout},${dial_option},${CONTEXT});
+        NoOp(${DIALSTATUS});
+        if("${DIALSTATUS}" = "ANSWER"){         //如果被叫电话接听了
+            Hangup();
+        }else{
+            cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+        }
+        break;
+    case 2:         //座席号
+        &interact_ivr_call_agent(${ivr_dial_value},,,${dial_option},${${cur_node}_dial_call_sequence},${${cur_node}_dial_count},${CONTEXT});
+        NoOp(${DIALSTATUS});
+        if("${DIALSTATUS}" = "ANSWER"){         //如果被叫电话接听了
+            Hangup();
+        }else{
+            cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+        }
+        break;
+    case 3:         //crmid
+        &interact_ivr_call_agent(,,${ivr_dial_value},${dial_option},${${cur_node}_dial_call_sequence},${${cur_node}_dial_count},${CONTEXT});
+        NoOp(${DIALSTATUS});
+        if("${DIALSTATUS}" = "ANSWER"){         //如果被叫电话接听了
+            Hangup();
+        }else{
+            cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+        }
+        break;
+    case 4:         //分机号
+        //如果转分机，不发ringing
+        var_noringing=1;
+        &interact_call_agent(,${ivr_dial_value},,${dial_option},${CONTEXT});
+        NoOp(${DIALSTATUS});
+        if("${DIALSTATUS}" = "ANSWER"){         //如果被叫电话接听了
+            Hangup();
+        }else{
+            cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+        }
+        break;
+    case 5:         //队列号
+        if(${LEN(${ivr_dial_value})} = 1){
+            ivr_dial_value=000${ivr_dial_value};
+        }else if(${LEN(${ivr_dial_value})} = 2){
+            ivr_dial_value=00${ivr_dial_value};
+        }else if(${LEN(${ivr_dial_value})} = 3){
+            ivr_dial_value=0${ivr_dial_value};
+        }
+        NoOp(${QUEUE_EXISTS(${enterprise_id}${ivr_dial_value})});
+        if("${QUEUE_EXISTS(${enterprise_id}${ivr_dial_value})}" = "0"){
+            cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+        }else{
+            Set(queue_continue_position=);
+queue_start:
+            &interact_call_queue(${enterprise_id}${ivr_dial_value},${CONTEXT});
+
+            //根据队列返回状态进行溢出
+            switch(${QUEUESTATUS}){
+            case TIMEOUT:       //超时
+                //如果做继续等待，然后仍然排在溢出之前未知在这里写代码
+                Read(res,continue_press1,1,n,1,2);
+                if("${res}" = "1"){
+                    queue_continue_position=${QUEUEPOSITION};
+                    goto queue_start;
+                }
+                Playback(all_agent_busy);
+                cur_node=${${cur_node}_dial_fail};
+                break;
+            case FULL:      //队列满
+                Playback(all_agent_busy);
+                cur_node=${${cur_node}_dial_fail};
+                break;
+            case JOINEMPTY:     //队列空
+                Playback(all_agent_busy);
+                cur_node=${${cur_node}_dial_fail};
+                break;
+            default:
+                cur_node=${${cur_node}_dial_fail};
+                break;
+            }
+        }
+        break;
+    case 6:     //号码组
+        Set(tel_set_tel=);
+        &curl("${IVR_SERVER}/${IVR_PREFIX}/GetTelSet?enterpriseId=${enterprise_id}&telSet=${ivr_dial_value}&type=ivr",${CONTEXT});
+        if("${cdr_call_type}" = "${CALL_TYPE_IB}" || "${cdr_call_type}" = "${CALL_TYPE_WEB400_IB}"){
+            Set(cdr_status=${CDR_STATUS_IB_AGENT_CALLED});
+        }
+        Set(var_cdr_detail_call_type=${CALL_TYPE_IB_CALL_CLIENT});
+        Set(tel_start_time=${EPOCH});
+        if("${tel_set_tel}" != ""){ //避免号码组无效时出现死循环
+            if("${STAT(e,${MIXMONITOR_FILENAME})}" != "1" && "${is_record_ivr}" != "1") {
+                Set(virtual_client_number=01000000000); // 该号码是占位符
+                Set(monitor_file=${enterprise_id}-${STRFTIME(${cdr_start_time},,%Y%m%d%H%M%S)}-${cdr_customer_number}-${virtual_client_number}-record-${UNIQUEID});
+                MixMonitor(${monitor_file}.wav,abW(-1),/bin/cp ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${LOCAL_BACKUP_PATH}/;/bin/mv ${SPOOL_MONITOR_PATH}/${monitor_file}.wav ${VOICE_MERGE}/);
+                Set(cdr_record_file=${monitor_file}.mp3);
+            }
+            if("${tel_set_strategy}" = "order"){
+                while(1){
+                    for(i=1;${i}<=${tel_set_count};i=${i}+1){
+                        Set(sub_tel_set_tel=${CUT(tel_set_tel,;,${i})});
+                        Set(tel_number=${CUT(sub_tel_set_tel,\,,1)});
+                        Set(tel_time=${CUT(sub_tel_set_tel,\,,2)});
+                        Set(tel_curr_time=${EPOCH});
+                        if(${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)}){
+                            cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+                            goto break_1;//防止cur_node被设置两次
+                        }
+                        Set(cdr_client_number=${tel_number});
+                        Set(var_cdr_detail_callee_number=${tel_number});
+                        if("${cdr_record_file}" == ""){
+                            Set(cdr_record_file=${monitor_file}.mp3);
+                        }
+                        &interact_dial_tel(${tel_number},${MASTER_CHANNEL(router_clid_call_type)},${tel_time},tTU(interact_dial_bridge)${dial_option},${CONTEXT});
+                        if("${DIALSTATUS}" == "ANSWER"){
+                            Hangup();
+                        }
+                        if("${pre}" == "" || "${post}" == ""){
+                            Set(i_left=${MATH(${i}-1,int)});
+                            Set(i_right=${MATH(${i}+1,int)});
+                            Set(tel_set_tel=${CUT(tel_set_tel,;,-${i_left}&${i_right}-)});//剔除路由不存在的电话
+                            Set(tel_set_count=${MATH(${tel_set_count}-1,int)});
+                            Set(i=${i_left});
+                        }
+                        Wait(1);   
+                    }
+                    Set(tel_curr_time=${EPOCH});
+                    if("${DIALSTATUS}" == "ANSWER"){
+                        Hangup();
+                    }
+                    if(${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)} || ${tel_set_count} < 1){
+                        Set(cur_node=${${cur_node}_dial_fail});  //如果没有接通，溢出到失败节点
+                        break;
+                    }
+                    Wait(3);
+                }
+break_1:
+            }else{
+                while(1){
+                    Set(leave_tel_set_tel=${tel_set_tel});
+                    local leave_tel_set_count=${tel_set_count};
+                    local j=;
+                    local j_left=;
+                    local j_right=;
+                    for(i=1;${i}<=${tel_set_count};i=${i}+1){
+                        Set(j=${RAND(1,${leave_tel_set_count})});
+                        Set(sub_tel_set_tel=${CUT(leave_tel_set_tel,;,${j})});
+                        Set(tel_number=${CUT(sub_tel_set_tel,\,,1)});
+                        Set(tel_time=${CUT(sub_tel_set_tel,\,,2)});
+                        Set(tel_curr_time=${EPOCH});
+                        if(${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)}){
+                            cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+                            goto break_2;//防止cur_node被设置两次
+                        }
+                        Set(cdr_client_number=${tel_number});
+                        Set(var_cdr_detail_callee_number=${tel_number});
+                        if("${cdr_record_file}" == ""){
+                            Set(cdr_record_file=${monitor_file}.mp3);
+                        }
+                        &interact_dial_tel(${tel_number},${MASTER_CHANNEL(router_clid_call_type)},${tel_time},tTU(interact_dial_bridge)${dial_option},${CONTEXT});
+                        if("${DIALSTATUS}" == "ANSWER"){
+                            Hangup();
+                        }
+                        Wait(1);
+                        Set(j_left=${MATH(${j}-1,int)});
+                        Set(j_right=${MATH(${j}+1,int)});
+                        if("${pre}" == "" || "${post}" == ""){
+                            Set(tel_set_tel=${CUT(tel_set_tel,;,-${j_left}&${j_right}-)});//剔除路由不存在的电话
+                            Set(tel_set_count=${MATH(${tel_set_count}-1,int)});
+                            Set(i=${MATH(${i}-1,int)});
+                        }
+                        Set(leave_tel_set_tel=${CUT(leave_tel_set_tel,;,-${j_left}&${j_right}-)});
+                        Set(leave_tel_set_count=${MATH(${leave_tel_set_count}-1,int)});
+                    }  
+                    Set(tel_curr_time=${EPOCH});
+                    if("${DIALSTATUS}" == "ANSWER"){
+                        Hangup();
+                    }
+                    if(${tel_curr_time} >= ${MATH(${tel_start_time}+${tel_set_timeout},int)} || ${tel_set_count} < 1){ 
+                        cur_node=${${cur_node}_dial_fail};  //如果没有接通，溢出到失败节点
+                        break;
+                    }
+                    wait(3);
+                }
+break_2:
+            }
+        }else{
+            cur_node=${${cur_node}_dial_fail};  //如果号码组无效，溢出到失败节点
+            break;
+        }
+        
+        break;
+    default:
+        Hangup();
+    }
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    }
+}
+//ivr直接呼叫电话节点
+macro interact_ivr_dial_tel(tel,timeout,option,hcb) {
+    //当macro中需要再次调用macro时必须保存一个${CONTEXT}_hcb防止死循环
+    local ${CONTEXT}_hcb=${hcb};
+
+    //Set(cdr_client_number=${tel});
+    if("${cdr_call_type}" = "${CALL_TYPE_IB}" || "${cdr_call_type}" = "${CALL_TYPE_WEB400_IB}"){
+        Set(cdr_status=${CDR_STATUS_IB_AGENT_CALLED});
+    }
+ 
+    Set(var_cdr_detail_call_type=${CALL_TYPE_IB_CALL_CLIENT});
+
+    &interact_dial_multi_tel(${tel},${MASTER_CHANNEL(router_clid_call_type)},${timeout},tTU(interact_dial_bridge)${option},${CONTEXT});
+
+    return;
+
+    catch h {
+        if("${${CONTEXT}_hcb}" != ""){
+            jump h@${${CONTEXT}_hcb};
+        }else if("${hcb}" != ""){
+           jump h@${hcb};
+        }else if("${ARG${ARGC}}" != ""){
+            jump h@${ARG${ARGC}};
+        }else{
+            jump h@interact;
+        }
+    };
+}
+
+//ivr数据库接口节点
+macro interact_ivr_db() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    NoOp(${${cur_node}_db_enterprise_ivr_id});
+    NoOp(${${cur_node}_db_sql});
+    NoOp(${${cur_node}_db_next});
+    ivr_db_enterprise_ivr_id=${${cur_node}_db_enterprise_ivr_id};
+    ivr_db_sql=${EVAL("${${cur_node}_db_sql}")};
+    AGI(agi://${AGI_SERVER}:${AGI_PORT}/IvrDb.agi);
+    NoOp(${AGISTATUS});
+    cur_node=${${cur_node}_db_next};
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr会议室节点
+macro interact_ivr_conf() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    Set(cdr_mark=${CALL_MARK_CONFERENCE});
+	Set(__is_conf=1); // 进入会议室节点标识
+    retry=0;
+    room=${enterprise_id};
+    while(${retry} < 3){
+        Read(res,conf_input_pwd,6,n,1,3);
+	    NoOp(${res});
+	    NoOp(${${cur_node}_conf_admin_pwd});
+	    NoOp(${${cur_node}_conf_user_pwd});
+	    NoOp(${${cur_node}_conf_announce_count});
+        if("${res}" == "${${cur_node}_conf_admin_pwd}"){
+            if("${${cur_node}_conf_announce_count}" == "1"){
+                ConfBridge(${room},acs);
+            }else{
+                ConfBridge(${room},as);
+            }
+            break;
+        }else if("${res}" == "${${cur_node}_conf_user_pwd}"){
+            if("${${cur_node}_conf_announce_count}" == "1"){
+                ConfBridge(${room},cs);
+            }else{
+                ConfBridge(${room},s);
+            }
+            break;
+        }else{
+            Playback(conf_wrong_pwd);
+            retry=${retry}+1;
+        }
+    }
+
+    Hangup();
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    };
+}
+
+//ivr_switch节点.当判断的值有多种(多于等于3种)情况时使用该类型节点
+macro interact_ivr_switch() {
+    Set(cdr_ivr_flow=${cdr_ivr_flow}${ivr_id}|${cur_node}|${${cur_node}_action}|${EPOCH});
+    for(x=1; ${x}<=${${cur_node}_switch_value_and_next_ivr_count}; x=${x}+1) {
+        Set(item=${CUT(${cur_node}_switch_value_and_next_ivr,\,,${x})});
+        Set(item_value=${CUT(item,\|,1)});     // value; 1|1.2中的1
+        Set(item_node=${CUT(item,\|,2)});      // 下一跳的节点; 1|1.2中的1.2
+        if("${item_value}"="${${${cur_node}_switch_name}}") {
+            right_next_ivr_${enter_ivr_node_count}=${item_node};   // 设置下一跳转节点
+            break; 
+        }
+    }
+	if(${ISNULL(${right_next_ivr_${enter_ivr_node_count}})}) {
+        cur_node=${${cur_node}_other_next_ivr};
+    } else {
+        cur_node=${right_next_ivr_${enter_ivr_node_count}};
+    }
+    Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+    return;
+
+    catch h {
+        Set(cdr_ivr_flow=${cdr_ivr_flow}|${EPOCH},);
+        jump h@interact;
+    }
+}
+
+//ivr流程主函数，start_node参数可以指定从ivr中某一个节点开始执行
+macro interact_ivr_node(start_node) {
+    if(${ISNULL(${transfer_ivr_id})}) {
+        Set(cdr_mark=${CALL_MARK_ENTER_IVR}); // 非转移来的呼叫
+    } else {
+        Set(cdr_mark=${CALL_MARK_TRANSFER}); // 转移到IVR；
+    }
+    cur_node=${start_node};
+    enter_ivr_node_count=0;						//记录一次呼叫进入ivr_node的次数
+    while("${${cur_node}_action}" != ""){        //cur_node_action不为空的情况下
+        cur_node_action=${${cur_node}_action};
+        enter_ivr_node_count=${enter_ivr_node_count}+1;
+        if(${enter_ivr_node_count} > ${MAX_ENTER_IVR_NODE}) {	//若超过设定的最大进入ivr_node次数,则直接挂机
+            Hangup();
+        }
+        switch(${${cur_node}_action}){     //循环这个cur_node_action 所对应的action值
+        case 1:
+            &interact_ivr_play();
+            break;
+        case 2:
+            &interact_ivr_select();
+            break;
+        case 3:
+            &interact_ivr_voicemail();
+            break;
+        case 4:
+            &interact_ivr_queue();
+            break;
+        case 5:
+            &interact_ivr_time();
+            break;
+        case 6:
+            &interact_ivr_area();
+            break;
+        case 7:
+            &interact_ivr_fax_receive();
+            break;
+        case 8:
+            &interact_ivr_set();
+            break;
+        case 9:
+            &interact_ivr_read();
+            break;
+        case 10:
+            &interact_ivr_wait();
+            break;
+        case 11:
+            &interact_ivr_branch();
+            break;
+        case 12:
+            &interact_ivr_curl();
+            break;
+        case 13:
+            &interact_ivr_dial();
+            break;
+        case 14:
+            &interact_ivr_db();
+            break;
+        case 15:
+            &interact_ivr_conf();
+            break;
+        case 16:
+            &interact_ivr_switch();
+            break;
+        default:
+            Hangup();
+        break;
+        }
+    }
+    return;
+
+    catch h {
+        jump h@interact;
+    };
+}
+
+
+//交互
+context interact {
+    _X. => {
+        NoOp(交互);
+        NoOp(${EXTEN});
+        set(interact_ivr_id=${CUT(EXTEN,\,,1)});
+        set(interact_node_id=${CUT(EXTEN,\,,2)});
+
+        Answer();
+        if("${cdr_call_type}" = "${CALL_TYPE_CLICK_OUTCALL}" || "${cdr_call_type}" = "${CALL_TYPE_PREVIEW_OUTCALL}"){//先呼的是座席
+            //直接写到客户的那条cdr中，等radius server处理
+            Set(cdr_mark=${CALL_MARK_INTERACT});
+            Set(cdr_mark_data=${EXTEN});
+        }else{
+            Set(MASTER_CHANNEL(cdr_mark)=${CALL_MARK_INTERACT});
+            Set(MASTER_CHANNEL(cdr_mark_data)=${EXTEN});
+        }
+        //设置透传号码
+        &curl(${IVR_SERVER}/${IVR_PREFIX}/GetClid?enterpriseId=${enterprise_id}&routerClidCallType=${ROUTER_CLID_CALL_TYPE_IB_RIGHT}&customerNumber=${cdr_customer_number},${CONTEXT});
+        Set(CALLERID(all)=${clid}); 
+
+        &curl(${IVR_SERVER}/${ivr_PREFIX}/GetIvrNode?ivrId=${interact_ivr_id}&enterpriseId=${enterprise_id}&customerAreaCode=${customer_area_code},${CONTEXT});    //获取IVR的各个节点具体配置
+        &interact_ivr_node(${interact_node_id});    //进入IVR选择节点
+    };
+    //hangue
+    h => {
+        //DumpChan();
+        NoOp(${MASTER_CHANNEL(CHANNEL)});
+        NoOp(${MASTER_CHANNEL(interact_channel)});
+        NoOp(${MASTER_CHANNEL(interact_cno)});
+        Set(MASTER_CHANNEL(interact_channel)=);
+        UserEvent(interactReturn,Channel: ${CHANNEL},Uniqueid: ${UNIQUEID},EnterpriseId: ${enterprise_id},Cno: ${MASTER_CHANNEL(interact_cno)});
+        NoOp(hangup in interact);
+    };
+}
+
+
