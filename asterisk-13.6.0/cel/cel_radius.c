@@ -163,7 +163,8 @@ static int build_radius_record(VALUE_PAIR **send, struct ast_cel_event_record *r
 	}
 	/* Extra */
 	
-	int left_len=strlen(record->extra);
+	int left_len;
+	left_len=strlen(record->extra);
         char *left_value = (char *)record->extra;
         int send_len;
         while(left_len > 0){
@@ -482,7 +483,7 @@ static int load_module(void)
 	/* create dir /var/lib/cdr if it does not exist. add by liucl */    
 	if (access(cdr_directory,F_OK) == -1){
 		ast_log(LOG_DEBUG,"cdr_directory %s is not exist, I will create it.\n",cdr_directory);
-		if(mkdir(cdr_directory, 0755) == -1) {
+		if(ast_mkdir(cdr_directory, 0755) == -1) {
 			ast_log(LOG_ERROR,"Failed to create %s\n", cdr_directory);
 		}else{
 			ast_log(LOG_DEBUG,"Create directory %s is OK\n",cdr_directory);
