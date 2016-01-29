@@ -107,5 +107,6 @@
 ; best practice; instead, you should consider writing a static dialplan with
 ; proper data abstraction via a tool like func_odbc.
 
-musiconhold => curl, http://127.0.0.1:8089/interface/realtime/moh
-ps_endpoints => curl, http://127.0.0.1:8089/interace/realtime/endpoints
+musiconhold => curl,http://127.0.0.1:8089/interface/realtime/moh
+ps_endpoints => curl,http://127.0.0.1:8089/interface/realtime/endpoint
+ps_endpoint_id_ips => curl,http://127.0.0.1:8089/interface/realtime/identify

@@ -41,12 +41,12 @@
 ;
 ; The following object mappings are used by the unit test to test certain functionality of sorcery.
 ;
-[test_sorcery_section]
-test=memory
+;[test_sorcery_section]
+;test=memory
 
-[test_sorcery_cache]
-test/cache=test
-test=memory
+;[test_sorcery_cache]
+;test/cache=test
+;test=memory
 
 ;
 ; The following object mapping is the default mapping of external MWI mailbox
@@ -59,9 +59,13 @@ test=memory
 ; The following object mappings set PJSIP objects to use realtime database mappings from extconfig
 ; with the table names used when automatically generating configuration from the alembic script.
 ;
-;[res_pjsip]
-;endpoint=realtime,ps_endpoints
+[res_pjsip]
+endpoint/cache=memory_cache,expire_on_reload=yes,object_lifetime_maximum=3600
+endpoint=realtime,ps_endpoints
 ;auth=realtime,ps_auths
 ;aor=realtime,ps_aors
 ;domain_alias=realtime,ps_domain_aliases
+;contact=realtime,ps_contacts
+;[res_pjsip_endpoint_identifier_ip]
+;identify/cache=memory_cache,expire_on_reload=yes,object_lifetime_maximum=3600
 ;identify=realtime,ps_endpoint_id_ips

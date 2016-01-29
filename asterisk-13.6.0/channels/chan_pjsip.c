@@ -2253,6 +2253,13 @@ static void chan_pjsip_incoming_response(struct ast_sip_session *session, struct
 	cause_code->ast_cause = hangup_sip2cause(status.code);
 	ast_queue_control_data(session->channel, AST_CONTROL_PVT_CAUSE_CODE, cause_code, data_size);
 	ast_channel_hangupcause_hash_set(session->channel, cause_code, data_size);
+	/* status.code >= 700 when speechRecognize hangup the channel first */
+	/* do not rewrite cdr_sip_cause at this point */
+	if(status.code < 700){
+		char sip_code[256];
+		snprintf(sip_code, sizeof(sip_code), "%d", status.code);
+		pbx_builtin_setvar_helper(session->channel, "cdr_sip_cause", sip_code);
+	}
 }
 
 static int chan_pjsip_incoming_ack(struct ast_sip_session *session, struct pjsip_rx_data *rdata)

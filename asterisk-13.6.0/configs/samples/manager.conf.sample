@@ -55,8 +55,7 @@ timestampevents = yes
 ; Display certain channel variables every time a channel-oriented
 ; event is emitted:
 ;
-channelvars = cdr_main_unique_id,cdr_customer_number,cdr_customer_number_type,cdr_customer_area_code,cdr_callee_number,cdr_ob_clid,cdr_start_time,cdr_answer_time,cdr_dial_time,cdr_bridge_time,cdr_end_time,cdr_ivr_id,cdr_ivr_flow,cdr_telset_name,cdr_record_file,cdr_call_type,cdr_status,cdr_mark,cdr_hangup_cause,cdr_gw_ip,cdr_number_trunk,cdr_enterprise_id,cdr_mark_data,cdr_force_disconnect,cdr_hangup_side,cdr_request_time,cdr_request_unique_id,cdr_sip_cause,cdr_ivr_flow_sec,cdr_detail_mark,cdr_monitor_start_time,cdr_monitor_stop_time,cdr_detail_clid,cdr_detail_call_type,cdr_detail_callee_number,cdr_detail_gw_ip,cdr_callee_area_code,cdr_hotline,cdr_userfield,CDR(start),CDR(answer),CDR(end)
-
+channelvars = cdr_main_unique_id,cdr_customer_number,cdr_customer_number_type,cdr_customer_area_code,cdr_callee_number,cdr_ob_clid,cdr_start_time,cdr_answer_time,cdr_dial_time,cdr_bridge_time,cdr_end_time,cdr_ivr_id,cdr_ivr_flow,cdr_telset_name,cdr_record_file,cdr_call_type,cdr_status,cdr_mark,cdr_hangup_cause,cdr_gw_ip,cdr_number_trunk,cdr_enterprise_id,cdr_mark_data,cdr_force_disconnect,cdr_request_time,cdr_request_unique_id,cdr_sip_cause,cdr_ivr_flow_sec,cdr_detail_mark,cdr_monitor_start_time,cdr_monitor_stop_time,cdr_detail_clid,cdr_detail_call_type,cdr_detail_callee_number,cdr_detail_gw_ip,cdr_allee_area_code,cdr_hotline,cdr_userfield,cdr_end_reason,cdr_sip_cause,CDR(start),CDR(answer),CDR(end)
 ; debug = on	; enable some debugging info in AMI messages (default off).
 		; Also accessible through the "manager debug" CLI command.
 

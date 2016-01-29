@@ -1291,6 +1291,16 @@ macro ivr_router_check(hcb) {
 context default {
     _X. => {
         begin:
+	/*
+	NoOp(${VERSION()});
+	Set(CURL_FILE=/tmp/a/1.wav);
+	NoOp(${CURL_FILE});
+	Wait(1);
+	Set(res=${CURL_FILE(http://172.16.203.203/1.wav)});
+	Wait(1);
+	Hangup();
+	*/
+	//Dial(PJSIP/rd/sip:11101041005999@172.16.15.245:55069);
         if("${cdr_mark}" = ""){
             Set(cdr_mark=0);
         }
@@ -1301,11 +1311,12 @@ context default {
         Set(system_concurrent_call_ib=${REDIS_CMD(INCR system.concurrent_call.ib)});
         }
         Set(__main_channel=${CHANNEL});
-        if("${VERSION()}" == "13.6.0"){
-            Set(cdr_gw_ip=${CUT(CHANNEL(pjsip,remote_addr),:,1)});
-        }else{
-            Set(cdr_gw_ip=${CHANNEL(peerip)});
-        }
+	if("${VERSION()}" == "13.6.0"){
+		NoOp(${CHANNEL(pjsip,remote_addr)});
+		Set(cdr_gw_ip=${CUT(CHANNEL(pjsip,remote_addr),:,1)});
+	}else{
+        	Set(cdr_gw_ip=${CHANNEL(peerip)});
+	}
         Set(__cdr_number_trunk=${EXTEN});
         //如果网上400呼叫，cdr_start_time由呼叫时记录
         if("${cdr_start_time}" = ""){
@@ -1319,6 +1330,7 @@ context default {
         }else{
             Set(cdr_status=${CDR_STATUS_OB_ANSWER_WEBCALL});
         }
+	CDR(callType)=1;
         CHANNEL(language)=zh;          //设置中文
         AGISIGHUP=no;   //设置AGISIGHUP=no 解决AGI报错问题
         AGIEXITONHANGUP=no; //设置保证AGI执行完成 for ast13
@@ -1417,6 +1429,9 @@ Set(cdr_answer_time=${EPOCH});
 
     //hangup
     h => {
+	Set(CDR(anjb_end_time)=${EPOCH});
+	//System('ping www.baidu.com -c 5');
+	Set(CDR(anjb_test_wait)=anjb);
         Set(cdr_end_time=${EPOCH});
         Set(cdr_monitor_stop_time=${EPOCH});
         if(${cdr_call_type}=${CALL_TYPE_IB}){
