@@ -783,6 +783,9 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
 	int hashcompat = 0;
 	AST_LIST_HEAD(global_curl_info, curl_settings) *list = NULL;
 	char curl_errbuf[CURL_ERROR_SIZE + 1]; /* add one to be safe */
+	const char *curl_file;
+	char *tmp, *slash;
+	FILE *fp;
 
 	if (buf) {
 		*buf = '\0';
@@ -809,23 +812,22 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
 		return -1;
 	}
 	
-    const char *curl_file = pbx_builtin_getvar_helper(chan, "CURL_FILE");
-    if (ast_strlen_zero(curl_file)){
-        ast_log(LOG_ERROR, "curl_file is null\n");
-        return -1;
-    }
-    char *tmp, *slash;
-    tmp = ast_strdupa(curl_file);
-    if((slash = strrchr(tmp,'/'))){
-        *slash = '\0';
-    }
-    ast_mkdir(tmp, 0777);
+	curl_file = pbx_builtin_getvar_helper(chan, "CURL_FILE");
+    	if (ast_strlen_zero(curl_file)){
+        	ast_log(LOG_ERROR, "curl_file is null\n");
+        	return -1;
+    	}
+    	tmp = ast_strdupa(curl_file);
+    	if((slash = strrchr(tmp,'/'))){
+        	*slash = '\0';
+    	}
+    	ast_mkdir(tmp, 0777);
 
-    FILE *fp = fopen(curl_file, "wb+");
-    if(!fp){
-    	ast_log(LOG_ERROR, "fp is null ${CURL_FILE}=%s\n", curl_file);
-        return -1;
-    }
+    	fp = fopen(curl_file, "wb+");
+    	if(!fp){
+    		ast_log(LOG_ERROR, "fp is null ${CURL_FILE}=%s\n", curl_file);
+        	return -1;
+    	}
 
 	AST_LIST_LOCK(&global_curl_info);
 	AST_LIST_TRAVERSE(&global_curl_info, cur, list) {
