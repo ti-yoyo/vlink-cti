@@ -5248,6 +5248,7 @@ static int action_originate(struct mansession *s, const struct message *m)
 	struct ast_format_cap *cap = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
 	pthread_t th;
 	int bridge_early = 0;
+	char uniqueid[64];
 
 	if (!cap) {
 		astman_send_error(s, m, "Internal Error. Memory allocation failure.");
@@ -5359,7 +5360,6 @@ static int action_originate(struct mansession *s, const struct message *m)
 			}
 		}
 	}
-	char uniqueid[64];
 	uniqueid[0] = 0;
 	/* For originate async - we can bridge in early media stage */
 	bridge_early = ast_true(early_media);
