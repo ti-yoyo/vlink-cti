@@ -113,6 +113,9 @@ static int build_radius_record(VALUE_PAIR **send, struct ast_cel_event_record *r
 	struct ast_tm tm;
 	char timestr[128];
 	char *amaflags;
+	int left_len;
+	char *left_value;
+	int send_len;
 
 	if (!rc_avpair_add(rh, send, PW_ACCT_STATUS_TYPE, &recordtype, 0, 0)) {
 		return -1;
@@ -163,10 +166,8 @@ static int build_radius_record(VALUE_PAIR **send, struct ast_cel_event_record *r
 	}
 	/* Extra */
 	
-	int left_len;
-	left_len=strlen(record->extra);
-        char *left_value = (char *)record->extra;
-        int send_len;
+	left_len = strlen(record->extra);
+        left_value = (char *)record->extra;
         while(left_len > 0){
                if(left_len > 240){
                     send_len = 240;
