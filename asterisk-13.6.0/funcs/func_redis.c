@@ -84,6 +84,7 @@ static char *script_unlock = "if (redis.call('GET', KEYS[1]) == ARGV[1]) then re
 static int uniqueint;
 
 static int redis_connect(void){
+    redisReply *reply;
     ast_mutex_lock(&redis_lock);
     if(!conn){
         conn = redisConnectWithTimeout(g_server, g_port, g_timeout);
@@ -92,7 +93,7 @@ static int redis_connect(void){
             ast_log(LOG_ERROR, "Connect to redis %s:%d faild\n",g_server, g_port);
             return 0;
         }
-        redisReply *reply = redisCommand(conn,"SELECT 4");
+        reply = redisCommand(conn,"SELECT 4");
         freeReplyObject(reply);
     }
     ast_mutex_unlock(&redis_lock);
@@ -108,13 +109,14 @@ static void generate_uuid(char *uuid){
 }
 
 static void load_script(void){
+    redisReply* r;
     memset(script_lock_hash, 0, sizeof(script_lock_hash));
     memset(script_unlock_hash, 0, sizeof(script_unlock_hash));
     if(!redis_connect()){
         return;
     }
     ast_mutex_lock(&redis_lock);
-    redisReply* r = (redisReply*)redisCommand(conn, "SCRIPT LOAD %s", script_lock);
+    r = (redisReply*)redisCommand(conn, "SCRIPT LOAD %s", script_lock);
     if( NULL == r)
     {
         ast_log(LOG_ERROR, "Execut command:%s failure\n", script_lock);
@@ -160,6 +162,7 @@ static void load_script(void){
 }
 
 int ast_redis_lock(const char* key, int timeout, char* uuid){
+    redisReply* r;
     if(!script_loaded){
         load_script();        
     }
@@ -169,7 +172,7 @@ int ast_redis_lock(const char* key, int timeout, char* uuid){
     generate_uuid(uuid);
     while(1){
         ast_mutex_lock(&redis_lock);
-        redisReply* r = (redisReply*)redisCommand(conn, "EVALSHA %s 1 %s %s %d", script_lock_hash, key, uuid, timeout);
+        r = (redisReply*)redisCommand(conn, "EVALSHA %s 1 %s %s %d", script_lock_hash, key, uuid, timeout);
         if( NULL == r)
         {
             ast_log(LOG_ERROR, "Execut command:[EVALSHA %s 1 %s %s %d] failure\n", script_lock_hash, key, uuid, timeout);
@@ -193,6 +196,7 @@ int ast_redis_lock(const char* key, int timeout, char* uuid){
 }
 
 void ast_redis_unlock(const char* key, const char* uuid){
+    redisReply* r;
     if(!script_loaded){
         load_script();
     }
@@ -200,7 +204,7 @@ void ast_redis_unlock(const char* key, const char* uuid){
         return;
     }
     ast_mutex_lock(&redis_lock);
-    redisReply* r = (redisReply*)redisCommand(conn, "EVALSHA %s 1 %s %s", script_unlock_hash, key, uuid);
+    r = (redisReply*)redisCommand(conn, "EVALSHA %s 1 %s %s", script_unlock_hash, key, uuid);
     if( NULL == r)
     {
         ast_log(LOG_ERROR, "Execut command:[EVALSHA %s 1 %s %s] failure\n", script_unlock_hash, key, uuid);
@@ -215,11 +219,12 @@ void ast_redis_unlock(const char* key, const char* uuid){
 }
 
 int ast_redis_read(const char* key, char* value, int valuelen){
+    redisReply* r;
     if(!redis_connect()){
         return -1;
     }    
     ast_mutex_lock(&redis_lock);
-    redisReply* r = (redisReply*)redisCommand(conn, "GET %s", key); 
+    r = (redisReply*)redisCommand(conn, "GET %s", key); 
     if( NULL == r)  
     {  
         ast_log(LOG_ERROR, "Execut command:[GET %s] failure\n", key);  
@@ -242,11 +247,12 @@ int ast_redis_read(const char* key, char* value, int valuelen){
 }
 
 int ast_redis_write(const char* key, const char* value){
+    redisReply* r;
     if(!redis_connect()){
         return -1;
     }
     ast_mutex_lock(&redis_lock);
-    redisReply* r = (redisReply*)redisCommand(conn, "SET %s %s", key, value);  
+    r = (redisReply*)redisCommand(conn, "SET %s %s", key, value);  
     if( NULL == r)  
     {  
         ast_log(LOG_ERROR, "Execut command:[SET %s %s] failure\n", key, value);  
@@ -268,11 +274,12 @@ int ast_redis_write(const char* key, const char* value){
 }
 
 int ast_redis_cmd(const char* cmd, char* value, int valuelen){
+    redisReply* r;
     if(!redis_connect()){
         return -1;
     }    
     ast_mutex_lock(&redis_lock);
-    redisReply* r = (redisReply*)redisCommand(conn, cmd); 
+    r = (redisReply*)redisCommand(conn, cmd); 
     if( NULL == r)  
     {  
         ast_log(LOG_ERROR, "Execut command:[%s] failure\n", cmd);  
