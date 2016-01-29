@@ -28,7 +28,7 @@ nocolor = no			; Disable console colors.
 ;dontwarn = yes			; Disable some warnings.
 ;dumpcore = yes			; Dump core on crash (same as -g at startup).
 ;languageprefix = yes		; Use the new sound prefix path syntax.
-systemname = vlink	; Prefix uniqueid with a system name for
+systemname = jbe-1
 				; Global uniqueness issues.
 ;autosystemname = yes		; Automatically set systemname to hostname,
 				; uses 'localhost' on failure, or systemname if

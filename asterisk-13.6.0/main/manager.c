@@ -5359,7 +5359,8 @@ static int action_originate(struct mansession *s, const struct message *m)
 			}
 		}
 	}
-
+	char uniqueid[64];
+	uniqueid[0] = 0;
 	/* For originate async - we can bridge in early media stage */
 	bridge_early = ast_true(early_media);
 
@@ -5403,8 +5404,14 @@ static int action_originate(struct mansession *s, const struct message *m)
 		res = ast_pbx_outgoing_app(tech, cap, data, to, app, appdata, &reason, 1, l, n, vars, account, NULL, assignedids.uniqueid ? &assignedids : NULL);
 		ast_variables_destroy(vars);
 	} else {
+		struct ast_channel *chan = NULL;
 		if (exten && context && pi) {
-			res = ast_pbx_outgoing_exten(tech, cap, data, to, context, exten, pi, &reason, 1, l, n, vars, account, NULL, bridge_early, assignedids.uniqueid ? &assignedids : NULL);
+			res = ast_pbx_outgoing_exten(tech, cap, data, to, context, exten, pi, &reason, 1, l, n, vars, account, &chan, bridge_early, assignedids.uniqueid ? &assignedids : NULL);
+			if(chan){
+				ast_copy_string(uniqueid, ast_channel_uniqueid(chan), 64);
+				ast_channel_unlock(chan);
+				ast_channel_unref(chan);
+			}
 			ast_variables_destroy(vars);
 		} else {
 			astman_send_error(s, m, "Originate with 'Exten' requires 'Context' and 'Priority'");
@@ -5414,9 +5421,9 @@ static int action_originate(struct mansession *s, const struct message *m)
 		}
 	}
 	if (!res) {
-		astman_send_ack(s, m, "Originate successfully queued");
+		astman_send_ack(s, m, uniqueid);
 	} else {
-		astman_send_error(s, m, "Originate failed");
+		astman_send_error(s, m, uniqueid);
 	}
 
 fast_orig_cleanup:
@@ -5714,6 +5721,8 @@ static int process_events(struct mansession *s)
 
 	ao2_lock(s->session);
 	if (s->session->f != NULL) {
+		//add by anjb 2015-12-25 for performance
+		if(s->session->readperm != 0){
 		struct eventqent *eqe = s->session->last_ev;
 
 		while ((eqe = advance_event(eqe))) {
@@ -5730,6 +5739,7 @@ static int process_events(struct mansession *s)
 					}
 			}
 			s->session->last_ev = eqe;
+		}
 		}
 	}
 	ao2_unlock(s->session);
@@ -6588,7 +6598,6 @@ int __ast_manager_event_multichan(int category, const char *event, int chancount
 	va_list ap;
 	struct timeval now;
 	struct ast_str *buf;
-	int i;
 
 	if (!(sessions && ao2_container_count(sessions)) && AST_RWLIST_EMPTY(&manager_hooks)) {
 		return 0;

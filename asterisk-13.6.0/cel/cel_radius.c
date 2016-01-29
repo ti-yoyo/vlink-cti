@@ -43,6 +43,10 @@ ASTERISK_FILE_VERSION(__FILE__, "$Rev$")
 
 #include "asterisk/channel.h"
 #include "asterisk/cel.h"
+#include "asterisk/lock.h"
+#include <dirent.h>
+#include <sys/signal.h>
+#include <signal.h>
 #include "asterisk/module.h"
 #include "asterisk/logger.h"
 #include "asterisk/utils.h"
@@ -97,6 +101,11 @@ static rc_handle *rh = NULL;
 #define RADIUS_BACKEND_NAME "CEL Radius Logging"
 
 #define ADD_VENDOR_CODE(x,y) (rc_avpair_add(rh, send, x, y, strlen(y), VENDOR_CODE))
+
+static pthread_t monitor_thread = AST_PTHREADT_NULL;
+AST_MUTEX_DEFINE_STATIC(monlock);
+static char cdr_dir_tmp[PATH_MAX] = "/tmp";
+static char cdr_directory[PATH_MAX] = "/var/lib/cdr";
 
 static int build_radius_record(VALUE_PAIR **send, struct ast_cel_event_record *record)
 {
@@ -195,17 +204,222 @@ static int build_radius_record(VALUE_PAIR **send, struct ast_cel_event_record *r
 	/* Setting Acct-Session-Id & User-Name attributes for proper generation
 	   of Acct-Unique-Session-Id on server side */
 	/* Channel */
-	if (!rc_avpair_add(rh, send, PW_USER_NAME, &record->channel_name,
+	if (!rc_avpair_add(rh, send, PW_USER_NAME, record->channel_name,
 			strlen(record->channel_name), 0)) {
 		return -1;
 	}
 	return 0;
 }
 
+static VALUE_PAIR *get_avp(const char *file)
+{
+	FILE *in;
+	char tmp[256];
+	VALUE_PAIR *avp = NULL;
+	VALUE_PAIR *avp_head = NULL;
+	VALUE_PAIR *avp_tmp = NULL;
+	int len = 0;
+
+	if((in=fopen(file,"r")) != NULL) {
+		while(!feof(in)){
+			memset(tmp,0,sizeof(tmp));
+			if(!fgets(tmp,sizeof(tmp),in))
+				break;
+			avp = (VALUE_PAIR *)ast_malloc(sizeof(VALUE_PAIR));
+			if(avp == NULL){
+				return NULL;
+			}
+			if(avp_head == NULL){
+				avp_head = avp;
+			}
+			ast_copy_string(avp->name,tmp,strlen(tmp));
+			memset(tmp,0,sizeof(tmp));
+			fgets(tmp,sizeof(tmp),in);
+			avp->attribute = atoi(tmp);
+			memset(tmp,0,sizeof(tmp));
+			fgets(tmp,sizeof(tmp),in);
+			avp->type = atoi(tmp);
+			memset(tmp,0,sizeof(tmp));
+			fgets(tmp,sizeof(tmp),in);
+			if(avp->type == 0) {
+				len = strlen(tmp)-1;
+				tmp[len] = '\0';
+				memcpy(avp->strvalue,tmp,strlen(tmp));
+				avp->lvalue = strlen(tmp);
+			}else{
+				avp->lvalue = atoi(tmp);
+			}
+			avp->next = NULL;
+			if(avp_tmp != NULL){
+				avp_tmp->next = avp;
+			}
+			avp_tmp = avp;
+		}
+		fclose(in);
+	}
+
+	return avp_head;
+}
+
+/*! save avp to file if failed sending to radius server 
+ *  * add by liucl
+ *   */
+static int save_avp_to_file(const char *avp_file, const char *file_name, VALUE_PAIR *avp)
+{
+	int result = 0;
+	int len = 0;
+	FILE *wfile;
+	char tmp1[256],tmp2[256],tmp3[256];
+    char full_file_name[256];
+    int ret = 1; // return value of system()
+	
+	if((wfile=fopen(avp_file, "a+")) != NULL){
+		while(avp != NULL) {
+			memset(tmp1,0,sizeof(tmp1));
+			memset(tmp2,0,sizeof(tmp2));
+			memset(tmp3,0,sizeof(tmp3));
+			if(!fwrite(avp->name,1,strlen(avp->name),wfile))
+				return result;
+			fwrite("\n",1,1,wfile);
+			len = sprintf(tmp1,"%d",avp->attribute);
+			fwrite(tmp1,1,len,wfile);
+			fwrite("\n",1,1,wfile);
+			len = sprintf(tmp2,"%d",avp->type);
+			fwrite(tmp2,1,len,wfile);
+			fwrite("\n",1,1,wfile);
+			if(avp->type != 0) { // 1 | 2 | 3
+				sprintf(tmp3,"%u",avp->lvalue);
+				fwrite(tmp3,1,strlen(tmp3),wfile);
+				fwrite("\n",1,1,wfile);
+			}else { // type = 0
+				fwrite(avp->strvalue,1,strlen(avp->strvalue),wfile);
+				fwrite("\n",1,1,wfile);
+			}
+			avp = avp->next;
+		}
+		fclose(wfile);
+		result = 1;
+	}
+    memset(full_file_name, 0, sizeof(full_file_name));
+    snprintf(full_file_name,sizeof(full_file_name),"%s/%s", cdr_directory, file_name);
+    ret = link(avp_file, full_file_name);
+    ast_log(LOG_DEBUG, "ret:%d <> avp_file:%s <> full_file_name:%s\n",ret,avp_file,full_file_name);
+    if(ret != 0) {
+        ast_log(LOG_ERROR, "Failed to move %s\n", avp_file);
+    }
+
+	return result;
+}
+
+/*!frees all value_pairs in the list
+ *  */
+static void ast_avpair_free(VALUE_PAIR *pair)
+{
+    VALUE_PAIR *next;
+    while (pair != NULL){
+        next = pair->next;
+        ast_free(pair);
+        pair = next;
+    }
+}
+
+
+static void *do_monitor(void *data)
+{
+    int result = ERROR_RC;
+    char cdr_full_path[256];
+    DIR *cdr_dir;
+	VALUE_PAIR *resend = NULL;
+	struct dirent *dir_s = NULL;
+	int count = 0; // times of resend
+	int wait_time = 0;
+	
+	for(;;){
+        sleep(1); /* sleep 1 minute */
+		/* Open dir */
+		if((cdr_dir=opendir(cdr_directory)) == NULL){
+			ast_log(LOG_ERROR,"Failed to open %s\n",cdr_directory);
+		} else {
+		/* open */
+			while((dir_s=readdir(cdr_dir))!=NULL) {
+				if(!strcmp(dir_s->d_name,".") || !strcmp(dir_s->d_name,".."))
+					continue;
+				memset(cdr_full_path,0,sizeof(cdr_full_path));
+				snprintf(cdr_full_path,sizeof(cdr_full_path),"%s/%s",cdr_directory,dir_s->d_name);
+				resend = get_avp(cdr_full_path);
+				if(resend){
+					result = rc_acct(rh,0,resend);
+				}else{
+					ast_log(LOG_ERROR, "get avp return null!");
+				}
+				if(result != OK_RC){
+					ast_log(LOG_ERROR, "Failed to re-record Radius CDR record!\n");
+					if(resend){
+						ast_avpair_free(resend);
+						resend = NULL;
+					}
+					count++;
+					wait_time = count * 60; // reterval to resend cdr record: 60s, 120s,180s,240s......
+					ast_log(LOG_DEBUG,"----------wait_time:%d-----------\n", wait_time);
+					break;
+				}else{
+				ast_log(LOG_DEBUG,"----------cdr_full_path:%s send OK!-----------\n", cdr_full_path);
+				wait_time = 0;
+				count = 0;
+				if(remove(cdr_full_path) != 0)
+					ast_log(LOG_WARNING,"Failed to delete %s\n",cdr_full_path);
+			}
+			if(resend){
+				ast_avpair_free(resend);
+				resend = NULL;
+			}
+		}
+		closedir(cdr_dir);
+		}
+		
+		if (wait_time > 0) {
+			ast_log(LOG_DEBUG,"if-wait_time>0----------wait_time:%d-----------\n", wait_time);
+			sleep(wait_time);
+		}
+	}
+	return NULL;
+}
+
+static int start_monitor(void)
+{
+	/* If we're supposed to be stopped -- stay stopped */
+	if (monitor_thread == AST_PTHREADT_STOP)
+		return 0;
+	ast_mutex_lock(&monlock);
+	if (monitor_thread == pthread_self()) {
+		ast_mutex_unlock(&monlock);
+		ast_log(LOG_WARNING, "Cannot kill myself cdr monitor\n");
+		return -1;
+	}
+	if (monitor_thread != AST_PTHREADT_NULL) {
+		/* Wake up the thread */
+		pthread_kill(monitor_thread, SIGURG);
+	} else {
+		/* Start a new monitor */
+		if (ast_pthread_create_background(&monitor_thread, NULL, do_monitor, NULL) < 0) {
+			ast_mutex_unlock(&monlock);
+			ast_log(LOG_ERROR, "Unable to start cdr monitor thread.\n");
+			return -1;
+		}
+	}
+	ast_mutex_unlock(&monlock);
+
+	return 0;
+}
+
+
+
 static void radius_log(struct ast_event *event)
 {
 	int result = ERROR_RC;
 	VALUE_PAIR *send = NULL;
+	int ret = 0;
+	char cdr_full_path[256];
 	struct ast_cel_event_record record = {
 		.version = AST_CEL_EVENT_RECORD_VERSION,
 	};
@@ -220,7 +434,17 @@ static void radius_log(struct ast_event *event)
 
 	result = rc_acct(rh, 0, send);
 	if (result != OK_RC) {
-		ast_log(LOG_ERROR, "Failed to record Radius CEL record!\n");
+		ast_log(LOG_ERROR, "Failed to record Radius CEL record! unique_id=%s\n", record.unique_id);
+        	/* file name */
+        	if(record.unique_id && (!ast_strlen_zero(record.unique_id))){
+            		snprintf(cdr_full_path,sizeof(cdr_full_path),"%s/%s",cdr_dir_tmp,record.unique_id);
+			/* write cdr to file if rc_acct failed */
+			ret = save_avp_to_file(cdr_full_path,record.unique_id,send);
+			if(!ret){
+				ast_log(LOG_ERROR,"Failed to write cdr to file! unique_id=%s\n", record.unique_id);
+			}
+        	}
+		goto return_cleanup;
 	}
 
 return_cleanup:
@@ -255,6 +479,17 @@ static int load_module(void)
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
+	/* create dir /var/lib/cdr if it does not exist. add by liucl */    
+	if (access(cdr_directory,F_OK) == -1){
+		ast_log(LOG_DEBUG,"cdr_directory %s is not exist, I will create it.\n",cdr_directory);
+		if(mkdir(cdr_directory, 0755) == -1) {
+			ast_log(LOG_ERROR,"Failed to create %s\n", cdr_directory);
+		}else{
+			ast_log(LOG_DEBUG,"Create directory %s is OK\n",cdr_directory);
+		}
+	}
+	/* liucl add end*/
+
 	/*
 	 * start logging
 	 *
@@ -286,6 +521,12 @@ static int load_module(void)
 		rh = NULL;
 		return AST_MODULE_LOAD_DECLINE;
 	} else {
+/*
+ * 		* Create a independent thread to monitoring /var/lib/cdr. 
+ * 				* If there is file in the directory, then send it to radius.
+ * 						* add by liucl
+ * 								*/
+		start_monitor();
 		return AST_MODULE_LOAD_SUCCESS;
 	}
 }

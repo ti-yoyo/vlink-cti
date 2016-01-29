@@ -964,9 +964,9 @@ endpoint=sip_proxy
 match=172.16.15.245
 type=identify
 
-[vos]
-type=endpoint
-transport=transport-udp-nat
-context=default
-disallow=all
-allow=ulaw,alaw,gsm,g729
+;[tinet_rd_trunk]
+;type=endpoint
+;transport=transport-udp-nat
+;context=default
+;disallow=all
+;allow=ulaw,alaw,gsm,g729

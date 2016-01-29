@@ -157,3 +157,4 @@ accountlogs=yes  ; create separate log file for each account code. Default is "y
 ;newcdrcolumns=yes ; Enable logging of post-1.8 CDR columns (peeraccount, linkedid, sequence).
                    ; Default is "no".
 
+
