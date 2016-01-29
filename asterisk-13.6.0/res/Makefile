@@ -27,7 +27,7 @@ ifneq ($(findstring $(OSARCH), mingw32 cygwin ),)
 endif
 
 res_config_ldap.o: _ASTCFLAGS+=-DLDAP_DEPRECATED
-
+res_json.o: _ASTCFLAGS+=-Wno-error
 ael/ael_lex.o: ael/ael_lex.c ../include/asterisk/ael_structs.h ael/ael.tab.h
 ael/ael_lex.o: _ASTCFLAGS+=-I. -Iael -Wno-unused
 
