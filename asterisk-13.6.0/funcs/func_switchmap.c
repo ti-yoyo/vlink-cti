@@ -70,12 +70,15 @@ static int switch_map_exec(struct ast_channel *chan, const char *cmd, char *data
 	char *parse;
 	char strbuf[1024];
 	char varbuf[1024];
-	memset(strbuf, 0, sizeof(strbuf));
-	memset(varbuf, 0, sizeof(varbuf));
 	AST_DECLARE_APP_ARGS(args,
 			AST_APP_ARG(parm);
 			AST_APP_ARG(jsonstring);
 	);
+	const char *varvalue;
+        cJSON *doc;
+        
+        memset(strbuf, 0, sizeof(strbuf));
+        memset(varbuf, 0, sizeof(varbuf));
 
 	parse = ast_strdupa(data);
 
@@ -87,7 +90,7 @@ static int switch_map_exec(struct ast_channel *chan, const char *cmd, char *data
 
 	if (args.parm[0] == '$' && strlen(args.parm)>3){ // ${cdr_status} -> 2
 		snprintf(varbuf,(int)strlen(args.parm)-2,"%s", args.parm+2);
-		const char *varvalue=pbx_builtin_getvar_helper(chan, varbuf);
+		varvalue=pbx_builtin_getvar_helper(chan, varbuf);
 		if(varvalue){
 			snprintf(varbuf,(int)strlen(varvalue)+1,"%s",varvalue);
 		}
@@ -96,7 +99,7 @@ static int switch_map_exec(struct ast_channel *chan, const char *cmd, char *data
 	}
 	ast_log(LOG_NOTICE, "~~~~~~args.parm:%s ~~~ varbuf:%s\n", args.parm,varbuf);
 	
-	cJSON *doc = cJSON_Parse(pbx_builtin_getvar_helper(chan, args.jsonstring));
+	doc = cJSON_Parse(pbx_builtin_getvar_helper(chan, args.jsonstring));
 	if (!doc) {
 		ast_log(LOG_WARNING, "%s is not a valid JSON string!\n", args.jsonstring);
 		return -1;
