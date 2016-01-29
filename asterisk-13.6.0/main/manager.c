@@ -6565,7 +6565,7 @@ static int append_event(const char *str, int category)
 
 	return 0;
 }
-
+/*
 static void append_channel_vars(struct ast_str **pbuf, struct ast_channel *chan)
 {
 	RAII_VAR(struct varshead *, vars, NULL, ao2_cleanup);
@@ -6581,6 +6581,7 @@ static void append_channel_vars(struct ast_str **pbuf, struct ast_channel *chan)
 		ast_str_append(pbuf, 0, "ChanVariable(%s): %s=%s\r\n", ast_channel_name(chan), var->name, var->value);
 	}
 }
+*/
 
 /* XXX see if can be moved inside the function */
 AST_THREADSTORAGE(manager_event_buf);
