@@ -25,6 +25,8 @@ ATTRIBUTE	Asterisk-Unique-ID		114	string  Digium
 ATTRIBUTE	Asterisk-User-Name		115	string  Digium
 ATTRIBUTE   Asterisk-Linked-ID      116 string  Digium
 ATTRIBUTE   Asterisk-Extra          117 string  Digium
+ATTRIBUTE   Asterisk-Request-Unique-Id      47  string Digium
+ATTRIBUTE	Asterisk-Sip-Cause				50	string Digium
 
 END-VENDOR	Digium
 
