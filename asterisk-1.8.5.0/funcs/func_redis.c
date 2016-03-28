@@ -287,7 +287,7 @@ int ast_redis_cmd(const char* cmd, char* value, int valuelen){
             ast_copy_string(value, r->str, valuelen);
         } else if ( r->type == REDIS_REPLY_INTEGER )  {
 
-            snprintf(value, valuelen, "%llu", r->integer);
+            snprintf(value, valuelen, "%lld", r->integer);
         }
     }
     freeReplyObject(r);  
