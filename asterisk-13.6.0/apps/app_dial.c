@@ -2727,73 +2727,86 @@ static int dial_exec_full(struct ast_channel *chan, const char *data, struct ast
 			/* we need to stream the announcement while monitoring the caller for a hangup */
 
 			/* stream the file */
-			res = ast_streamfile(peer, opt_args[OPT_ARG_ANNOUNCE], ast_channel_language(peer));
-			if (res) {
-				res = 0;
-				ast_log(LOG_ERROR, "error streaming file '%s' to callee\n", opt_args[OPT_ARG_ANNOUNCE]);
-			}
-
-			ast_set_flag(ast_channel_flags(peer), AST_FLAG_END_DTMF_ONLY);
-			while (ast_channel_stream(peer)) {
-				int ms;
-
-				ms = ast_sched_wait(ast_channel_sched(peer));
-
-				if (ms < 0 && !ast_channel_timingfunc(peer)) {
-					ast_stopstream(peer);
-					break;
+			
+			char *streamfileargs = opt_args[OPT_ARG_ANNOUNCE] ;
+			char *streamfilename=NULL;
+			
+			while (!res && (streamfilename = strsep(&streamfileargs, "&"))) {
+			    if(ast_strlen_zero(streamfilename))
+				{
+					res=0;
+					continue;
 				}
-				if (ms < 0)
-					ms = 1000;
+				res = ast_streamfile(peer, streamfilename, ast_channel_language(peer));
+			
+			
+				if (res) {
+					res = 0;
+					ast_log(LOG_ERROR, "error streaming file '%s' to callee\n", streamfilename);
+				}
 
-				active_chan = ast_waitfor_n(chans, 2, &ms);
-				if (active_chan) {
-					struct ast_channel *other_chan;
-					struct ast_frame *fr = ast_read(active_chan);
+				ast_set_flag(ast_channel_flags(peer), AST_FLAG_END_DTMF_ONLY);
+				while (ast_channel_stream(peer)) {
+					int ms;
 
-					if (!fr) {
-						ast_autoservice_chan_hangup_peer(chan, peer);
-						res = -1;
-						goto done;
-					}
-					switch (fr->frametype) {
-					case AST_FRAME_DTMF_END:
-						digit = fr->subclass.integer;
-						if (active_chan == peer && strchr(AST_DIGIT_ANY, res)) {
-							ast_stopstream(peer);
-							res = ast_senddigit(chan, digit, 0);
-						}
+					ms = ast_sched_wait(ast_channel_sched(peer));
+
+					if (ms < 0 && !ast_channel_timingfunc(peer)) {
+						ast_stopstream(peer);
 						break;
-					case AST_FRAME_CONTROL:
-						switch (fr->subclass.integer) {
-						case AST_CONTROL_HANGUP:
-							ast_frfree(fr);
+					}
+					if (ms < 0)
+						ms = 1000;
+
+					active_chan = ast_waitfor_n(chans, 2, &ms);
+					if (active_chan) {
+						struct ast_channel *other_chan;
+						struct ast_frame *fr = ast_read(active_chan);
+
+						if (!fr) {
 							ast_autoservice_chan_hangup_peer(chan, peer);
 							res = -1;
 							goto done;
-						case AST_CONTROL_CONNECTED_LINE:
-							/* Pass COLP update to the other channel. */
-							if (active_chan == chan) {
-								other_chan = peer;
-							} else {
-								other_chan = chan;
+						}
+						switch (fr->frametype) {
+						case AST_FRAME_DTMF_END:
+							digit = fr->subclass.integer;
+							if (active_chan == peer && strchr(AST_DIGIT_ANY, res)) {
+								ast_stopstream(peer);
+								res = ast_senddigit(chan, digit, 0);
 							}
-							if (ast_channel_connected_line_sub(active_chan, other_chan, fr, 1)
-								&& ast_channel_connected_line_macro(active_chan,
-									other_chan, fr, other_chan == chan, 1)) {
-								ast_indicate_data(other_chan, fr->subclass.integer,
-									fr->data.ptr, fr->datalen);
+							break;
+						case AST_FRAME_CONTROL:
+							switch (fr->subclass.integer) {
+							case AST_CONTROL_HANGUP:
+								ast_frfree(fr);
+								ast_autoservice_chan_hangup_peer(chan, peer);
+								res = -1;
+								goto done;
+							case AST_CONTROL_CONNECTED_LINE:
+								/* Pass COLP update to the other channel. */
+								if (active_chan == chan) {
+									other_chan = peer;
+								} else {
+									other_chan = chan;
+								}
+								if (ast_channel_connected_line_sub(active_chan, other_chan, fr, 1)
+									&& ast_channel_connected_line_macro(active_chan,
+										other_chan, fr, other_chan == chan, 1)) {
+									ast_indicate_data(other_chan, fr->subclass.integer,
+										fr->data.ptr, fr->datalen);
+								}
+								break;
+							default:
+								break;
 							}
 							break;
 						default:
+							/* Ignore all others */
 							break;
 						}
-						break;
-					default:
-						/* Ignore all others */
-						break;
+						ast_frfree(fr);
 					}
-					ast_frfree(fr);
 				}
 				ast_sched_runq(ast_channel_sched(peer));
 			}
