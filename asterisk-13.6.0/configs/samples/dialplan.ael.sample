@@ -30,12 +30,24 @@ macro ivr_play() {
                 break;
             case 4:    // 4:tts
                 Set(TTS_TEXT=${${cur_node}_play_voice_${x}_file});
-                Set(TTS_FILE=);
-                AGI(agi://${AGI_SERVER}:${AGI_PORT}/TtsSendGet.agi);
-                if("${TTS_FILE}" !=""){
-                    Set(file=${TTS_FILE});
-                    Playback(${file},noanswer);
-                }
+				Set(TTS_FILE=);
+		        AGI(agi://${AGI_SERVER}:${AGI_PORT}/TtsSendGet.agi);
+				NoOp("TTS_FILE is"${TTS_FILE});
+				//if(${REGEX(";" ${TTS_FILE})} == 1)
+				{
+			    	Set(l_tts_file_num=${FIELDQTY(TTS_FILE,;)});
+			       	for(i=1;${i}<=${l_tts_file_num};i=${i}+1){
+	            		Set(l_tts_file=${CUT(TTS_FILE,;,${i})});
+	            		if("${l_tts_file}" != ""){
+	                		Set(TTS_FILEPATH=/tts_cache_temp/${UNIQUEID});
+							Set(CURL_FILE=${TTS_FILEPATH}/${l_tts_file}.wav);
+							Set(res=${CURL_FILE(https://s3.cn-north-1.amazonaws.com.cn/tinet-tts-cache-test/${l_tts_file}.wav)});
+							Set(file=${TTS_FILEPATH}/${l_tts_file});
+							Playback(${file},noanswer);	                	
+			            }
+		        	}
+		    	}
+				
                 break;
             case 5:    // 5:语音变量
                 if("${${EVAL(${${cur_node}_play_voice_${x}_file})}}" != ""){
@@ -53,15 +65,30 @@ macro ivr_play() {
                 }
                 break;
             case 8:    // 8:tts变量
-                if("${${EVAL(${${cur_node}_play_voice_${x}_file})}}" != ""){
-                    Set(TTS_TEXT=${${EVAL(${${cur_node}_play_voice_${x}_file})}});
-                    Set(TTS_FILE=);
-                    AGI(agi://${AGI_SERVER}:${AGI_PORT}/TtsSendGet.agi);
-                    if("${TTS_FILE}" !=""){
-                        Set(file=${TTS_FILE});
-                        Playback(${file},noanswer);
-                    }
+				
+				
+				set(TTS_FILE=);
+				Set(TTS_TEXT=${${EVAL(${${cur_node}_play_voice_${x}_file})}});
+                AGI(agi://${AGI_SERVER}:${AGI_PORT}/TtsSendGet.agi);
+
+                NoOp("TTS_FILE is"${TTS_FILE});
+                //if(${REGEX(";" ${TTS_FILE})} == 1)
+				{
+                        Set(l_tts_file_num=${FIELDQTY(TTS_FILE,;)});
+                         for(i=1;${i}<=${l_tts_file_num};i=${i}+1){
+                                Set(l_tts_file=${CUT(TTS_FILE,;,${i})});
+                                if("${l_tts_file}" != ""){
+                                        Set(TTS_FILEPATH=/tts_cache_temp/${UNIQUEID});
+                                        Set(CURL_FILE=${TTS_FILEPATH}/${l_tts_file}.wav);
+                                        Set(res=${CURL_FILE(https://s3.cn-north-1.amazonaws.com.cn/tinet-tts-cache-test/${l_tts_file}.wav)});
+                                        Set(file=${TTS_FILEPATH}/${l_tts_file});
+                                        Playback(${file},noanswer);
+                                }
+                        }
+                	}
                 }
+                break;
+                
                 break;
             default:
                 break;
