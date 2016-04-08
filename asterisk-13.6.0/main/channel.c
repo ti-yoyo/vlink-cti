@@ -2644,6 +2644,14 @@ void ast_hangup(struct ast_channel *chan)
 	 */
 	ast_pbx_hangup_handler_run(chan);
 	ao2_unlink(channels, chan);
+
+	struct timeval end;
+	end = ast_tvnow();
+	char endtime[256];
+	snprintf(endtime, sizeof(endtime), "%ld", end.tv_sec);
+
+	pbx_builtin_setvar_helper(chan, "cdr_end_time", endtime);
+	
 	ast_channel_lock(chan);
 
 	destroy_hooks(chan);

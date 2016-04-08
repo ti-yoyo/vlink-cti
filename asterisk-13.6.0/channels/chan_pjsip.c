@@ -1777,12 +1777,6 @@ static int chan_pjsip_hangup(struct ast_channel *ast)
 	if (!h_data) {
 		goto failure;
 	}
-	struct timeval end;
-	end = ast_tvnow();
-	char endtime[256];
-	snprintf(endtime, sizeof(endtime), "%ld", end.tv_sec);
-
-	pbx_builtin_setvar_helper(channel->session->channel, "cdr_end_time", endtime);
 
 	if (ast_sip_push_task(channel->session->serializer, hangup, h_data)) {
 		ast_log(LOG_WARNING, "Unable to push hangup task to the threadpool. Expect bad things\n");

@@ -784,8 +784,10 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
 	AST_LIST_HEAD(global_curl_info, curl_settings) *list = NULL;
 	char curl_errbuf[CURL_ERROR_SIZE + 1]; /* add one to be safe */
 	const char *curl_file;
+	const char *perm_file;
 	char *tmp, *slash;
 	FILE *fp;
+	int needed_Caching = 0;
 
 	if (buf) {
 		*buf = '\0';
@@ -817,17 +819,43 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
         	ast_log(LOG_ERROR, "curl_file is null\n");
         	return -1;
     	}
-    	tmp = ast_strdupa(curl_file);
-    	if((slash = strrchr(tmp,'/'))){
-        	*slash = '\0';
-    	}
-    	ast_mkdir(tmp, 0777);
+	
+		//if the required file  can be read ,return directly with 0
+	if((fp=fopen(curl_file, "r"))!=NULL){
+		fclose(fp);
+		return 0;		
+	}	
+	
+	tmp = ast_strdupa(curl_file);
+        if((slash = strrchr(tmp,'/'))){
+                *slash = '\0';
+        }
+        ast_mkdir(tmp, 0777);
 
-    	fp = fopen(curl_file, "wb+");
-    	if(!fp){
-    		ast_log(LOG_ERROR, "fp is null ${CURL_FILE}=%s\n", curl_file);
-        	return -1;
-    	}
+
+	
+	perm_file = ast_strdupa(curl_file);
+	curl_file = pbx_builtin_getvar_helper(chan, "CACHE_FILE");
+	if (ast_strlen_zero(curl_file)){
+                ast_log(LOG_WARNING, "CACHE_FILE is null\n");
+                curl_file = ast_strdupa(perm_file);
+        }
+	else{
+		needed_Caching = 1;
+		tmp = ast_strdupa(curl_file);
+		if((slash = strrchr(tmp,'/'))){
+    		*slash = '\0';
+		}
+		ast_mkdir(tmp, 0777);
+	}
+
+	fp = fopen(curl_file, "wb+");
+	if(!fp){
+		ast_log(LOG_ERROR, "fp is null ${CURL_FILE}=%s\n", curl_file);
+    	return -1;
+	}
+
+	
 
 	AST_LIST_LOCK(&global_curl_info);
 	AST_LIST_TRAVERSE(&global_curl_info, cur, list) {
@@ -883,6 +911,25 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
 
 	if (chan)
 		ast_autoservice_stop(chan);
+
+	if(needed_Caching)
+	{
+		fclose(fp);
+	
+		int status;
+		status = rename(curl_file,perm_file);
+		if(0 != status)
+		{
+			ast_log(LOG_ERROR, "renaming file's status = '%d'\
+				, errno='%d'\
+				, src file = '%s' \
+				,dst file ='%s.'\n", 
+				status, errno,curl_file,perm_file);
+		}
+	}
+	
+ 	
+
 
 	ret = 0;
 	return ret;
