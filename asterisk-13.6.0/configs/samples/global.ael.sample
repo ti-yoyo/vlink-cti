@@ -18,8 +18,12 @@ globals {
     IVR_FLOW_LEN=4000;                          // cdr_ivr_flow 长度阀值
 
     VOICE_MAIL_PATH=/var/spool/asterisk/monitor;    //留言存储语音目录
+	TTS_FILE_CACHED_PATH=/var/spool/asterisk/tts_tmp_files;	//TTS文件临时缓存目录
+	TTS_FILE_PATH=/var/spool/asterisk/tts_files;		//TTS文件缓存目录
+	TTS_S3_URL=s3.cn-north-1.amazonaws.com.cn/tinet-tts-cache-test //TTS s3桶地址
     IVR_SOUNDS_NFS_PATH=/var/nfs/voices/ivr_voice;     //ivr语音在nfs的目录，用于自助录音存储和重听
-    MAX_CURL_LEN=4096;                              //最大http接口返回数据量
+    MAX_CURL_LEN=4096;                              	//最大http接口返回数据量
+	
 
 
     /* 呼叫类型定义 */
