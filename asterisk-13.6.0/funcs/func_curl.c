@@ -787,7 +787,7 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
 	const char *perm_file;
 	char *tmp, *slash;
 	FILE *fp;
-	int needed_Caching = 0;
+	int need_caching = 0;
 
 	if (buf) {
 		*buf = '\0';
@@ -820,43 +820,34 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
         	return -1;
     	}
 	
-		//if the required file  can be read ,return directly with 0
+	//if the required file  can be read ,return directly with 0
 	if((fp=fopen(curl_file, "r"))!=NULL){
 		fclose(fp);
 		return 0;		
 	}	
 	
-	tmp = ast_strdupa(curl_file);
-        if((slash = strrchr(tmp,'/'))){
-                *slash = '\0';
-        }
-        ast_mkdir(tmp, 0777);
-
-
-	
-	perm_file = ast_strdupa(curl_file);
+	perm_file = curl_file;
 	curl_file = pbx_builtin_getvar_helper(chan, "CACHE_FILE");
 	if (ast_strlen_zero(curl_file)){
                 ast_log(LOG_WARNING, "CACHE_FILE is null\n");
-                curl_file = ast_strdupa(perm_file);
+                curl_file = perm_file;
         }
 	else{
-		needed_Caching = 1;
-		tmp = ast_strdupa(curl_file);
-		if((slash = strrchr(tmp,'/'))){
-    		*slash = '\0';
-		}
-		ast_mkdir(tmp, 0777);
+		need_caching = 1;		
 	}
+
+	tmp = ast_strdupa(curl_file);
+	if((slash = strrchr(tmp,'/'))){
+		*slash = '\0';
+	}
+	ast_mkdir(tmp, 0777);
 
 	fp = fopen(curl_file, "wb+");
 	if(!fp){
 		ast_log(LOG_ERROR, "fp is null ${CURL_FILE}=%s\n", curl_file);
     	return -1;
 	}
-
 	
-
 	AST_LIST_LOCK(&global_curl_info);
 	AST_LIST_TRAVERSE(&global_curl_info, cur, list) {
 		if (cur->key == CURLOPT_SPECIAL_HASHCOMPAT) {
@@ -912,11 +903,17 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
 	if (chan)
 		ast_autoservice_stop(chan);
 
-	if(needed_Caching)
-	{
-		fclose(fp);
-	
+	fclose(fp);
+	if(need_caching)
+	{	
 		int status;
+		
+		tmp = ast_strdupa(perm_file);
+		if((slash = strrchr(tmp,'/'))){
+				*slash = '\0';
+		}
+		ast_mkdir(tmp, 0777);
+		
 		status = rename(curl_file,perm_file);
 		if(0 != status)
 		{
@@ -927,10 +924,6 @@ static int acf_curl_file_helper(struct ast_channel *chan, const char *cmd, char 
 				status, errno,curl_file,perm_file);
 		}
 	}
-	
- 	
-
-
 	ret = 0;
 	return ret;
 }
