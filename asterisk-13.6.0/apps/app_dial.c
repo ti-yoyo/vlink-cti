@@ -2720,6 +2720,8 @@ static int dial_exec_full(struct ast_channel *chan, const char *data, struct ast
 			int digit = 0;
 			struct ast_channel *chans[2];
 			struct ast_channel *active_chan;
+			char *streamfileargs = opt_args[OPT_ARG_ANNOUNCE] ;
+			char *streamfilename = NULL;
 
 			chans[0] = chan;
 			chans[1] = peer;
@@ -2728,8 +2730,7 @@ static int dial_exec_full(struct ast_channel *chan, const char *data, struct ast
 
 			/* stream the file */
 			
-			char *streamfileargs = opt_args[OPT_ARG_ANNOUNCE] ;
-			char *streamfilename=NULL;
+			
 			
 			while (!res && (streamfilename = strsep(&streamfileargs, "&"))) {
 			    if(ast_strlen_zero(streamfilename))
