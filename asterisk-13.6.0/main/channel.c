@@ -2615,13 +2615,14 @@ static void destroy_hooks(struct ast_channel *chan)
 /*! \brief Hangup a channel */
 void ast_hangup(struct ast_channel *chan)
 {
+	struct timeval end;
+	char endtime[64];
 	/* Be NULL safe for RAII_VAR() usage. */
 	if (!chan) {
 		return;
 	}
-
+	
 	ast_autoservice_stop(chan);
-
 	ast_channel_lock(chan);
 
 	while (ast_channel_masq(chan) || ast_channel_masqr(chan))  {
@@ -2630,7 +2631,6 @@ void ast_hangup(struct ast_channel *chan)
 
 	/* Mark as a zombie so a masquerade cannot be setup on this channel. */
 	ast_set_flag(ast_channel_flags(chan), AST_FLAG_ZOMBIE);
-
 	ast_channel_unlock(chan);
 
 	/*
@@ -2643,17 +2643,11 @@ void ast_hangup(struct ast_channel *chan)
 	 * longer be needed.
 	 */
 	ast_pbx_hangup_handler_run(chan);
-	ao2_unlink(channels, chan);
-
-	struct timeval end;
-	end = ast_tvnow();
-	char endtime[256];
+	ao2_unlink(channels, chan);	
+	end = ast_tvnow();	
 	snprintf(endtime, sizeof(endtime), "%ld", end.tv_sec);
-
-	pbx_builtin_setvar_helper(chan, "cdr_end_time", endtime);
-	
+	pbx_builtin_setvar_helper(chan, "cdr_end_time", endtime);	
 	ast_channel_lock(chan);
-
 	destroy_hooks(chan);
 
 	free_translation(chan);
